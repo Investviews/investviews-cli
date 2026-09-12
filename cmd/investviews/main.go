@@ -11,14 +11,35 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/investviews/investviews-cli/internal/api"
+	"github.com/investviews/investviews-cli/internal/commands"
 	"github.com/investviews/investviews-cli/internal/config"
 )
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "investviews: "+err.Error())
-		os.Exit(1)
+	err := newRootCmd().Execute()
+	if err == nil {
+		return
 	}
+	fmt.Fprintln(os.Stderr, "investviews: "+err.Error())
+	// A typed error carries its own recovery action; print it so the next
+	// move never has to be guessed.
+	if apiErr, ok := api.AsAPIError(err); ok {
+		if hint := apiErr.Hint(); hint != "" {
+			fmt.Fprintln(os.Stderr, "  "+hint)
+		}
+	}
+	os.Exit(exitCode(err))
+}
+
+// exitCode is the process status. 2 is money, 3 is credentials, 4 is a market
+// we do not serve, 1 is everything else — a script branches on these, so a new
+// error code must not invent a new number.
+func exitCode(err error) int {
+	if errors.Is(err, errNoToken) {
+		return api.ExitAuth
+	}
+	return commands.ExitCode(err)
 }
 
 // errNoToken is returned by "auth status" when nothing is configured, so a
@@ -53,8 +74,29 @@ Documentation: https://docs.investviews.ai`,
 	cmd.PersistentFlags().StringVar(&tokenFlag, "token", "",
 		"API token; outranks "+config.EnvToken+" and the config file")
 	cmd.AddCommand(newAuthCmd(&tokenFlag))
+	for _, sub := range commands.All(commands.Deps{NewClient: newClient(&tokenFlag)}) {
+		cmd.AddCommand(sub)
+	}
 
 	return cmd
+}
+
+// newClient builds the API client one command run uses. The token is resolved
+// at run time, not at build time, so --token still wins over the environment
+// and the config file.
+func newClient(tokenFlag *string) func() (*api.Client, error) {
+	return func() (*api.Client, error) {
+		cfg, err := loadConfig(*tokenFlag)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Token == "" {
+			// Refused before any request: a call with no credential is a
+			// 401 that costs a round trip and tells you less than this does.
+			return nil, commands.ErrNoToken
+		}
+		return api.New(api.Options{BaseURL: cfg.APIURL, Token: cfg.Token})
+	}
 }
 
 // loadConfig resolves the configuration for one command run.

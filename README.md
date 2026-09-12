@@ -2,9 +2,71 @@
 
 Command-line client for the [InvestViews public API](https://docs.investviews.ai).
 
-> **Status: under construction.** This commit is the scaffold — the module, the command tree and
-> the token/base-URL configuration. The API commands (`geo`, `stats`, `usage`, `coverage`) land in
-> the following commits.
+> **Status: under construction.** The commands below work; release packaging (Homebrew, signed
+> binaries) and the Claude plugin land in the following commits.
+
+## Commands
+
+| command | cost | what it does |
+|---|---|---|
+| `geo browse` | free | walk the geography from the countries down |
+| `geo search <name>` | free | resolve a name to a `geo_id` |
+| `geo lookup` | free | name the zones containing one cell or one point |
+| `geo hexes <geo_id>` | free | list a place's H3 cells |
+| `coverage` | free | which markets are served, and how fresh each is |
+| `usage` | free | what this token has spent and has left |
+| **`stats current`** | **METERED** | figures for the newest built period |
+| **`stats history`** | **METERED** | the same figures, period by period |
+
+Every run prints what it cost, taken from the quota headers the server sent back — a free call and
+a metered one never look alike. Discovery is free on purpose: look a place up rather than guessing
+an id, then spend one metered call once you know it holds data.
+
+`--json` prints the response as JSON and moves the cost line to stderr, so stdout pipes into `jq`.
+
+### Reaching a place from nothing
+
+```sh
+investviews geo browse                            # the countries
+investviews geo browse --parent es                # Spain's top level
+investviews geo browse --parent R349055           # that region's children
+investviews stats current --geo-id R5326784       # the place you reached
+```
+
+Every row prints the `geo_id` the next call takes, so you never guess a name.
+
+### ⚠️ `--level` means two different things
+
+Which one depends on `--parent`:
+
+| call | what comes back |
+|---|---|
+| `geo browse --parent es --level city` | **every city in Spain** — a whole-level jump, from any region |
+| `geo browse --parent R349055 --level city` | **only that region's** own cities — a filter on its direct children |
+
+The header line of every result says which of the two happened. `browse` never adds a `--level` of
+its own: doing so would make the flag mean one thing at depth 1 and another at depth 2, and would
+hide `region` and `province` entirely.
+
+### ⚠️ An empty result is usually the right answer
+
+Levels are **skipped, not shifted**. A city's direct children are macrozones, so asking a city for
+microzones legitimately returns nothing, and a city with a blank province hangs straight off its
+region. "No rows at this level" prints as a normal answer with a next move, and **exits 0** —
+reading it as a failure abandons a place that plainly has children.
+
+The same holds for figures: `stats current` answering with no rows is a covered place that held
+nothing in that window, not an error and not a zero.
+
+### Exit codes
+
+| code | meaning |
+|---|---|
+| 0 | success, including an empty result |
+| 1 | any other failure, including a usage mistake caught before the request was sent |
+| 2 | money — quota exhausted, or an inactive subscription |
+| 3 | credentials — no token, a bad token, or a read-only token on a write endpoint |
+| 4 | we hold no data for that country at all; retrying never succeeds |
 
 ## Build
 
