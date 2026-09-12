@@ -2,8 +2,9 @@
 
 Command-line client for the [InvestViews public API](https://docs.investviews.ai).
 
-> **Status: under construction.** The commands below work; release packaging (Homebrew, signed
-> binaries) and the Claude plugin land in the following commits.
+> **Status: under construction.** The commands below work and the release pipeline is wired
+> (goreleaser, GitHub Actions); the Homebrew tap repository does not exist yet, so `brew install`
+> is not available until the operator creates it. The Claude plugin lands in a following commit.
 
 ## Commands
 
@@ -68,13 +69,48 @@ nothing in that window, not an error and not a zero.
 | 3 | credentials — no token, a bad token, or a read-only token on a write endpoint |
 | 4 | we hold no data for that country at all; retrying never succeeds |
 
+## Install
+
+**Release binaries.** Every `v*` tag publishes `darwin`/`linux` × `amd64`/`arm64` tarballs and a
+`checksums.txt` on the [releases page](https://github.com/Investviews/investviews-cli/releases).
+Download the one for your platform, check it against `checksums.txt`, unpack it and put
+`investviews` on your `PATH`.
+
+**Homebrew (macOS).** ⚠️ Not available yet: the tap repository `Investviews/homebrew-tap` has not
+been created. Once it exists, a release publishes a cask into it and the install is:
+
+```sh
+brew install Investviews/tap/investviews
+```
+
+Homebrew installs casks on macOS only, so on Linux use the release tarball.
+
+**Which build am I running?**
+
+```sh
+investviews version          # investviews 1.4.0 (commit …, built …, go1.25.4, darwin/arm64)
+investviews version --json
+```
+
+A binary you built yourself reports `dev`. That is not a fault — it means the version stamp the
+release pipeline writes was never applied.
+
 ## Build
 
 ```sh
 go build -o investviews ./cmd/investviews
 ```
 
-Requires Go 1.25 or newer.
+Requires Go 1.25 or newer. CI pins the exact patch release it builds with; see
+`.github/workflows/test.yml`.
+
+A local build is unstamped and reports `dev`. To see what a release build reports, without
+releasing anything:
+
+```sh
+goreleaser release --snapshot --clean
+./dist/investviews_darwin_arm64_v8.0/investviews version
+```
 
 ## Authentication
 
@@ -147,7 +183,7 @@ do not "correct" it.
   `!investviews`, so the two spellings are genuinely different strings. That is exactly why the
   choice is written down instead of being left to whoever ran `go mod init` first.
 - Nothing resolves this string. `go install` and `go get` were rejected as distribution channels
-  for this CLI — it ships as Homebrew formulae and release binaries — and no other project imports
+  for this CLI — it ships as a Homebrew cask and release binaries — and no other project imports
   this module.
 - GitHub resolves owner names case-insensitively over HTTPS, so a manual `git clone` of the
   lowercase form works anyway.

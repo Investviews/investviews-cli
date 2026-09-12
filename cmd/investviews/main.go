@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/investviews/investviews-cli/internal/api"
 	"github.com/investviews/investviews-cli/internal/commands"
 	"github.com/investviews/investviews-cli/internal/config"
+	"github.com/investviews/investviews-cli/internal/version"
 )
 
 func main() {
@@ -69,11 +71,15 @@ http://localhost:3000/public/v1 when working against a local server.
 Documentation: https://docs.investviews.ai`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Gives "investviews --version" for free. It prints the same stamp the
+		// version subcommand does, so the two can never disagree.
+		Version: version.Version,
 	}
+	cmd.SetVersionTemplate("{{ .Name }} " + version.Version + "\n")
 
 	cmd.PersistentFlags().StringVar(&tokenFlag, "token", "",
 		"API token; outranks "+config.EnvToken+" and the config file")
-	cmd.AddCommand(newAuthCmd(&tokenFlag))
+	cmd.AddCommand(newAuthCmd(&tokenFlag), newVersionCmd())
 	for _, sub := range commands.All(commands.Deps{NewClient: newClient(&tokenFlag)}) {
 		cmd.AddCommand(sub)
 	}
@@ -102,6 +108,41 @@ func newClient(tokenFlag *string) func() (*api.Client, error) {
 // loadConfig resolves the configuration for one command run.
 func loadConfig(tokenFlag string) (*config.Config, error) {
 	return config.Load(config.Options{TokenFlag: tokenFlag})
+}
+
+// newVersionCmd builds "investviews version": which build this is. It is free,
+// offline and needs no token — a support answer must never depend on being able
+// to reach the API.
+func newVersionCmd() *cobra.Command {
+	var asJSON bool
+
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print the build this binary was stamped with (free, offline)",
+		Long: `Print the build this binary was stamped with.
+
+A released binary reports its tag, the commit it was built from and the build
+time. A binary built from source reports "` + version.Default + `" — that is not
+a fault, it means nobody released it.
+
+This command makes no network call and needs no token.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			if asJSON {
+				body, err := json.MarshalIndent(version.Fields(), "", "  ")
+				if err != nil {
+					return fmt.Errorf("cannot render the build stamp as JSON: %w", err)
+				}
+				_, err = fmt.Fprintf(out, "%s\n", body)
+				return err
+			}
+			fmt.Fprintln(out, version.String())
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the build stamp as JSON")
+	return cmd
 }
 
 func newAuthCmd(tokenFlag *string) *cobra.Command {
