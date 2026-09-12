@@ -3,19 +3,19 @@
 # else — there is no manual dispatch, so "what shipped" is always answered by
 # the tag list.
 #
-# ⚠️⚠️ THE TAP REPOSITORY MUST EXIST BEFORE THE FIRST v* TAG.
-# `Investviews/homebrew-tap` did NOT exist when this was written (the GitHub API
-# returned 404 on 2026-09-12). Creating a public repository under the org is the
-# operator's call, not this pipeline's. Until it exists, this job publishes the
-# GitHub release and its binaries and THEN fails on the tap step — the release
-# is already public at that point, so the failure is noisy but not destructive.
-# Re-running after creating the tap is safe.
+# ✅ The tap repository EXISTS: `Investviews/homebrew-tap`, public, default branch
+# `main`, created 2026-09-12.
 #
-# ⚠️ AND IT NEEDS ITS OWN TOKEN. The automatic GITHUB_TOKEN is scoped to THIS
-# repository and cannot write to another one, so pushing the cask needs a
-# separate token with `contents: write` on the tap, stored as the repository
-# secret HOMEBREW_TAP_GITHUB_TOKEN. A missing secret fails the same way a
-# missing tap does: after the release is already out.
+# ⚠️⚠️ BUT IT STILL NEEDS ITS OWN TOKEN, AND THAT IS NOW THE ONLY THING BETWEEN
+# THIS WORKFLOW AND A WORKING `brew install`. The automatic GITHUB_TOKEN is
+# scoped to THIS repository and cannot write to another one, so pushing the cask
+# needs a separate token with `contents: write` on the tap, stored as the
+# repository secret HOMEBREW_TAP_GITHUB_TOKEN.
+#
+# A missing secret fails LATE: this job publishes the GitHub release and its
+# binaries and THEN fails on the tap step. The release is already public at that
+# point, so the failure is noisy but not destructive, and re-running after adding
+# the secret is safe.
 name: release
 
 on:

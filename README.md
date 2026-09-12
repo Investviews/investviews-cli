@@ -3,9 +3,9 @@
 Command-line client for the [InvestViews public API](https://docs.investviews.ai).
 
 > **Status: under construction.** The commands below work, the release pipeline is wired
-> (goreleaser, GitHub Actions) and the Claude Code plugin is in this repository; the Homebrew tap
-> repository does not exist yet, so `brew install` is not available until the operator creates it,
-> and nothing has been published to a plugin marketplace yet.
+> (goreleaser, GitHub Actions) and the Claude Code plugin is in this repository. The Homebrew tap
+> repository now exists, but no release has been tagged yet, so `brew install` has nothing to fetch
+> and nothing has been published to a plugin marketplace.
 
 ## Commands
 
@@ -77,8 +77,9 @@ nothing in that window, not an error and not a zero.
 Download the one for your platform, check it against `checksums.txt`, unpack it and put
 `investviews` on your `PATH`.
 
-**Homebrew (macOS).** ⚠️ Not available yet: the tap repository `Investviews/homebrew-tap` has not
-been created. Once it exists, a release publishes a cask into it and the install is:
+**Homebrew (macOS).** ⚠️ Not available until the first release is tagged. The tap repository
+`Investviews/homebrew-tap` exists, but it holds no cask yet — a `v*` tag publishes one into it, and
+the install is then:
 
 ```sh
 brew install Investviews/tap/investviews

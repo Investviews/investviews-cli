@@ -91,16 +91,18 @@ release:
     ---
     Docs: https://docs.investviews.ai
 
-# ⚠️⚠️ THE TAP REPOSITORY MUST EXIST BEFORE THE FIRST v* TAG.
-# `Investviews/homebrew-tap` did NOT exist when this was written (the GitHub API
-# returned 404 on 2026-09-12). Creating a public repository under the org is the
-# operator's call. Until it exists, a real `goreleaser release` reaches this pipe
-# and fails AFTER the GitHub release has already been published — the binaries
-# land, the tap step is what breaks. Snapshot runs never reach it.
+# ✅ The tap repository EXISTS: `Investviews/homebrew-tap`, public, default branch
+# `main`, created by the operator 2026-09-12 and scaffolded with a README. The
+# `branch: main` below matches it. Nothing here is blocked on the repository any
+# more.
 #
-# It also needs a token with write access to that repository, exported as
-# HOMEBREW_TAP_GITHUB_TOKEN in the release workflow. The default GITHUB_TOKEN of
-# this repository cannot write to another one.
+# ⚠️ WHAT IS STILL MISSING IS THE TOKEN. Pushing the cask needs write access to
+# that OTHER repository, exported as HOMEBREW_TAP_GITHUB_TOKEN in the release
+# workflow; this repository's automatic GITHUB_TOKEN cannot write to it. Without
+# the secret a real `goreleaser release` reaches this pipe and fails AFTER the
+# GitHub release is already published — the binaries land, the tap step is what
+# breaks. Snapshot runs never reach it, so a green snapshot proves nothing about
+# this pipe.
 #
 # ⚠️ A CASK, NOT A FORMULA. `brews:` (the formula) is deprecated in goreleaser
 # v2 in favour of `homebrew_casks:`, and `goreleaser check` fails the build on a
