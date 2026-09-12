@@ -2,9 +2,10 @@
 
 Command-line client for the [InvestViews public API](https://docs.investviews.ai).
 
-> **Status: under construction.** The commands below work and the release pipeline is wired
-> (goreleaser, GitHub Actions); the Homebrew tap repository does not exist yet, so `brew install`
-> is not available until the operator creates it. The Claude plugin lands in a following commit.
+> **Status: under construction.** The commands below work, the release pipeline is wired
+> (goreleaser, GitHub Actions) and the Claude Code plugin is in this repository; the Homebrew tap
+> repository does not exist yet, so `brew install` is not available until the operator creates it,
+> and nothing has been published to a plugin marketplace yet.
 
 ## Commands
 
@@ -94,6 +95,38 @@ investviews version --json
 
 A binary you built yourself reports `dev`. That is not a fault — it means the version stamp the
 release pipeline writes was never applied.
+
+## Claude Code plugin
+
+This repository is also a Claude Code plugin and its own single-plugin marketplace, so Claude can
+answer market questions by driving the CLI. Install both with:
+
+```
+/plugin marketplace add Investviews/investviews-cli
+/plugin install investviews@investviews-cli
+```
+
+The marketplace is named **`investviews-cli`** (this repository) and the plugin inside it is named
+**`investviews`** — which is why the install line reads `investviews@investviews-cli`.
+
+| file | what it is |
+|---|---|
+| `.claude-plugin/plugin.json` | the plugin manifest |
+| `.claude-plugin/marketplace.json` | the marketplace, listing this one plugin at `./` |
+| `skills/investviews/SKILL.md` | the skill: the workflow, not an HTTP reference |
+
+The skill teaches the shape of the work — resolve a place for free, read the availability signal,
+then spend one metered call and cite the period — because an agent that does not know which calls
+cost quota either asks for permission it does not need or burns quota it does.
+
+To try it without installing anything, load the directory for one session:
+
+```sh
+claude --plugin-dir "$PWD" --bare -p "what do flats cost in Russafa, Valencia?"
+```
+
+The plugin does not ship the binary. `investviews` must be on `PATH` and a token configured; see
+Install and Authentication above.
 
 ## Build
 
