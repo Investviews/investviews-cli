@@ -1,0 +1,4 @@
+/dist/
+/investviews
+*.test
+.DS_Store
