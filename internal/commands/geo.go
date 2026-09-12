@@ -323,15 +323,30 @@ func renderSearch(w io.Writer, query string, resp *api.SearchResponse) {
 	}
 }
 
+// renderSearchMiss prints the suggestions a miss carries.
+//
+// ⚠️ Each suggestion is an OBJECT with a geo_id, not a name, so it is rendered
+// like a search hit rather than joined into a list. A name on its own would
+// send the user straight back into the search that just missed; the id can be
+// spent on the next call.
 func renderSearchMiss(w io.Writer, query string, err *api.UnknownPlaceError) {
 	fmt.Fprintf(w, "No place matched %q.\n", query)
-	if len(err.DidYouMean) > 0 {
-		fmt.Fprintf(w, "did you mean: %s\n", strings.Join(err.DidYouMean, ", "))
-		fmt.Fprintln(w, "Search one of those, or walk to the place with `investviews geo browse`.")
+	if len(err.DidYouMean) == 0 {
+		fmt.Fprintln(w, "The API sent no suggestions. Walk to the place with `investviews geo browse`,")
+		fmt.Fprintln(w, "or check the market is served at all with `investviews coverage`.")
 		return
 	}
-	fmt.Fprintln(w, "The API sent no suggestions. Walk to the place with `investviews geo browse`,")
-	fmt.Fprintln(w, "or check the market is served at all with `investviews coverage`.")
+
+	fmt.Fprintf(w, "\nDid you mean one of these %d? Each carries a geo_id you can spend straight away.\n\n",
+		len(err.DidYouMean))
+	for i, hit := range err.DidYouMean {
+		fmt.Fprintf(w, "%d. %s — %s, %s\n", i+1, dash(hit.Name), dash(hit.Level), dash(hit.Country))
+		fmt.Fprintf(w, "   geo_id: %s\n", dash(hit.GeoID))
+		fmt.Fprintf(w, "   in:     %s\n", ancestry(hit.Ancestors))
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Ask about one with `investviews stats current --geo-id <id>`, or walk into it")
+	fmt.Fprintln(w, "with `investviews geo browse --parent <id>`.")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

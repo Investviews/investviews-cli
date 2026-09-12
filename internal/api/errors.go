@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,18 +91,18 @@ type APIError struct {
 	Status int
 
 	// Named fields the contract documents on specific failures.
-	Parameter  string   // the 400s that name a parameter
-	Selectors  []string // the one-territory 400: which selectors collided
-	RequestID  string   // quote this on a 500
-	GeoID      string   // unknown_place from a geo_id
-	Query      string   // unknown_place from a search
-	DidYouMean []string // unknown_place from a search — may be empty
-	H3         string   // unknown_place from a cell
-	ResetsAt   string   // quota_exhausted
-	UpgradeURL string   // quota_exhausted
-	Group      string   // rate_limited, app layer only
-	Limit      *int     // rate_limited, app layer only
-	RetryAfter *int     // rate_limited, app layer only, seconds
+	Parameter  string       // the 400s that name a parameter
+	Selectors  []string     // the one-territory 400: which selectors collided
+	RequestID  string       // quote this on a 500
+	GeoID      string       // unknown_place from a geo_id
+	Query      string       // unknown_place from a search
+	DidYouMean []Suggestion // unknown_place from a search — may be empty
+	H3         string       // unknown_place from a cell
+	ResetsAt   string       // quota_exhausted
+	UpgradeURL string       // quota_exhausted
+	Group      string       // rate_limited, app layer only
+	Limit      *int         // rate_limited, app layer only
+	RetryAfter *int         // rate_limited, app layer only, seconds
 
 	// Meta is the response's quota and request headers, empty when the
 	// error never reached the API.
@@ -318,58 +319,118 @@ func AsAPIError(err error) (*APIError, bool) {
 	return apiErr, ok
 }
 
-// errorEnvelope is the wire shape. Decoding runs twice — once into the named
-// fields, once into Extra — so an added key is never lost.
-type errorEnvelope struct {
-	Error      string          `json:"error"`
-	Message    string          `json:"message"`
-	DocsURL    string          `json:"docs_url"`
-	Parameter  string          `json:"parameter"`
-	Selectors  []string        `json:"selectors"`
-	RequestID  string          `json:"request_id"`
-	GeoID      string          `json:"geo_id"`
-	Query      string          `json:"query"`
-	DidYouMean []string        `json:"did_you_mean"`
-	H3         json.RawMessage `json:"h3"`
-	ResetsAt   string          `json:"resets_at"`
-	UpgradeURL string          `json:"upgrade_url"`
-	Group      string          `json:"group"`
-	Limit      *int            `json:"limit"`
-	RetryAfter *int            `json:"retry_after"`
+// Suggestion is one entry of did_you_mean on an unknown_place 404.
+//
+// ⚠️ IT IS AN OBJECT, NOT A NAME. Each suggestion carries a geo_id that can be
+// spent straight away on ?parent= or /stats/current?geo_id= — which is the
+// whole value of the field, and the reason a name alone would be useless:
+// 13.6% of neighbourhood names repeat inside their own country.
+//
+// This was typed []string until 2026-09-12. The empty case [] decoded into
+// that perfectly, and the ground-truth sample only ever recorded the empty
+// case, so nothing looked wrong until a live miss returned objects. See
+// parseError for the second half of that bug.
+//
+// ⚠️ Ancestors here is not guaranteed to end on a country entry: one sample
+// stopped at region, while a live 2026-09-12 miss ended on a country. Read
+// each step's level; never infer a level from its position in the chain.
+type Suggestion struct {
+	GeoID     string    `json:"geo_id"`
+	Name      string    `json:"name"`
+	Level     string    `json:"level"`
+	Country   string    `json:"country"`
+	Ancestors Ancestors `json:"ancestors"`
 }
 
 // parseError turns a non-2xx response body into a typed error. A body that is
 // not the JSON envelope (a proxy's HTML page, an empty 502) still produces an
 // APIError, with the status standing in for the code.
+//
+// ⚠️ EVERY FIELD IS DECODED INDEPENDENTLY, and a field whose shape this client
+// does not expect is dropped rather than failing the whole envelope.
+//
+// did_you_mean taught this on 2026-09-12. It was typed []string, the API sends
+// objects, and because the envelope was decoded in ONE strict pass, that single
+// mismatch fell through to the not-JSON fallback: every unknown_place 404 was
+// reported as not_found, with no message, no hint and no suggestions. The three
+// required fields — error, message, docs_url — must survive whatever an
+// optional one does, and the raw bytes of anything that would not decode stay
+// in Extra.
 func parseError(status int, header http.Header, body []byte, meta Meta) error {
 	apiErr := &APIError{Status: status, Meta: meta, RequestID: meta.RequestID}
 
-	var env errorEnvelope
-	if err := json.Unmarshal(body, &env); err == nil && env.Error != "" {
-		apiErr.Code = ErrorCode(env.Error)
-		apiErr.Message = env.Message
-		apiErr.DocsURL = env.DocsURL
-		apiErr.Parameter = env.Parameter
-		apiErr.Selectors = env.Selectors
-		apiErr.GeoID = env.GeoID
-		apiErr.Query = env.Query
-		apiErr.DidYouMean = env.DidYouMean
-		apiErr.ResetsAt = env.ResetsAt
-		apiErr.UpgradeURL = env.UpgradeURL
-		apiErr.Group = env.Group
-		apiErr.Limit = env.Limit
-		apiErr.RetryAfter = env.RetryAfter
-		if env.RequestID != "" {
-			apiErr.RequestID = env.RequestID
-		}
-		apiErr.H3 = jsonScalarString(env.H3)
-		_ = json.Unmarshal(body, &apiErr.Extra)
-	} else {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil || rawString(fields, "error") == "" {
 		apiErr.Code = codeForStatus(status)
 		apiErr.Message = fallbackMessage(status, body)
+		return classify(apiErr, header)
 	}
 
+	apiErr.Extra = fields
+	apiErr.Code = ErrorCode(rawString(fields, "error"))
+	apiErr.Message = rawString(fields, "message")
+	apiErr.DocsURL = rawString(fields, "docs_url")
+	apiErr.Parameter = rawString(fields, "parameter")
+	apiErr.GeoID = rawString(fields, "geo_id")
+	apiErr.Query = rawString(fields, "query")
+	apiErr.H3 = rawString(fields, "h3")
+	apiErr.ResetsAt = rawString(fields, "resets_at")
+	apiErr.UpgradeURL = rawString(fields, "upgrade_url")
+	apiErr.Group = rawString(fields, "group")
+	apiErr.Limit = rawInt(fields, "limit")
+	apiErr.RetryAfter = rawInt(fields, "retry_after")
+	apiErr.Selectors = rawStrings(fields, "selectors")
+	apiErr.DidYouMean = rawSuggestions(fields, "did_you_mean")
+	if id := rawString(fields, "request_id"); id != "" {
+		apiErr.RequestID = id
+	}
 	return classify(apiErr, header)
+}
+
+// rawString reads a field as a string, accepting a JSON number too — h3 ids
+// travel as decimal strings, but a number there is not worth losing the
+// envelope over. Any other shape reads as empty.
+func rawString(fields map[string]json.RawMessage, key string) string {
+	return jsonScalarString(fields[key])
+}
+
+func rawInt(fields map[string]json.RawMessage, key string) *int {
+	raw, ok := fields[key]
+	if !ok {
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return nil
+	}
+	return &n
+}
+
+func rawStrings(fields map[string]json.RawMessage, key string) []string {
+	raw, ok := fields[key]
+	if !ok {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// rawSuggestions decodes did_you_mean. A shape this client does not expect
+// costs the suggestions and NOTHING ELSE — the envelope, the code and the hint
+// all still reach the user, and the raw bytes stay in Extra.
+func rawSuggestions(fields map[string]json.RawMessage, key string) []Suggestion {
+	raw, ok := fields[key]
+	if !ok {
+		return nil
+	}
+	var out []Suggestion
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 // classify wraps the envelope in the type that carries its recovery action.
@@ -479,16 +540,21 @@ func fallbackMessage(status int, body []byte) string {
 		status, http.StatusText(status), text)
 }
 
-// jsonScalarString reads a value the API may send as a string or a number —
-// H3 ids are decimal strings, but an envelope field is not worth a decode
-// failure over.
+// jsonScalarString reads a value the API may send as a string or a number.
+// Any other shape — an object, an array — reads as empty rather than as its
+// own source text.
 func jsonScalarString(raw json.RawMessage) string {
-	if len(raw) == 0 || string(raw) == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
 		return ""
 	}
 	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
+	if err := json.Unmarshal(trimmed, &s); err == nil {
 		return s
 	}
-	return strings.Trim(string(raw), `"`)
+	var n json.Number
+	if err := json.Unmarshal(trimmed, &n); err == nil {
+		return n.String()
+	}
+	return ""
 }

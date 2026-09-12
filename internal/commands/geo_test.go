@@ -202,19 +202,33 @@ func TestSearchTellsTwoSameNamedPlacesApartByTheirChain(t *testing.T) {
 	contains(t, res.stdout, "geo_id: R200")
 }
 
+// ⚠️ A suggestion is an OBJECT carrying a geo_id, not a name. Printing only
+// names would send the user back into the search that just missed; the id is
+// what they can spend on the next call.
 func TestSearchPrintsDidYouMeanOnAMiss(t *testing.T) {
 	res := run(t, func(w http.ResponseWriter, _ *http.Request) {
 		freeHeaders(w)
 		writeBody(w, http.StatusNotFound, `{"error":"unknown_place","message":"Nothing matched.",
-		 "docs_url":"https://docs.investviews.ai/errors.html","query":"valenica",
-		 "did_you_mean":["valencia","palencia"]}`)
-	}, "geo", "search", "valenica")
+		 "docs_url":"https://docs.investviews.ai/errors.html","query":"springfield",
+		 "did_you_mean":[
+		   {"geo_id":"N386190007","name":"Springfield","level":"microzone","country":"gb",
+		    "ancestors":[{"geo_id":"N731914594","name":"Wake Green","level":"macrozone"},
+		                 {"geo_id":"R162378","name":"Birmingham","level":"city"},
+		                 {"geo_id":"R58447","name":"England","level":"region"}]},
+		   {"geo_id":"R9","name":"Springfield","level":"city","country":"us","ancestors":[]}]}`)
+	}, "geo", "search", "springfield")
 
 	if res.err == nil {
 		t.Fatal("a search miss is a 404 and must still fail")
 	}
-	contains(t, res.stderr, `No place matched "valenica".`)
-	contains(t, res.stderr, "did you mean: valencia, palencia")
+	contains(t, res.stderr, `No place matched "springfield".`)
+	contains(t, res.stderr, "Did you mean one of these 2?")
+	// Both ids, because two suggestions share a name and only the id and the
+	// chain tell them apart.
+	contains(t, res.stderr, "geo_id: N386190007")
+	contains(t, res.stderr, "geo_id: R9")
+	contains(t, res.stderr, "Birmingham (city, R162378)")
+	contains(t, res.stderr, "stats current --geo-id")
 }
 
 func TestSearchMissWithNoSuggestionsStillNamesTheNextMove(t *testing.T) {
