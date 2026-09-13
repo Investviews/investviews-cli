@@ -1,0 +1,73 @@
+# Publishes a release: binaries for darwin/linux × amd64/arm64, their checksums,
+# and the Homebrew cask in the org's tap. Triggered by a v* tag and by nothing
+# else — there is no manual dispatch, so "what shipped" is always answered by
+# the tag list.
+#
+# ✅ The tap repository EXISTS: `Investviews/homebrew-tap`, public, default branch
+# `main`, created 2026-09-12.
+#
+# ⚠️⚠️ BUT IT STILL NEEDS ITS OWN TOKEN, AND THAT IS NOW THE ONLY THING BETWEEN
+# THIS WORKFLOW AND A WORKING `brew install`. The automatic GITHUB_TOKEN is
+# scoped to THIS repository and cannot write to another one, so pushing the cask
+# needs a separate token with `contents: write` on the tap, stored as the
+# repository secret HOMEBREW_TAP_GITHUB_TOKEN.
+#
+# A missing secret fails LATE: this job publishes the GitHub release and its
+# binaries and THEN fails on the tap step. The release is already public at that
+# point, so the failure is noisy but not destructive, and re-running after adding
+# the secret is safe.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  # Creating the GitHub release and uploading the archives to it.
+  contents: write
+
+env:
+  # Pinned for the same reason as in test.yml: a release must not be built by
+  # whatever toolchain happened to be latest that day.
+  GO_VERSION: "1.25.4"
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # goreleaser reads the tag and builds the changelog from history; a
+          # shallow clone gives it neither.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: false
+
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          # Same major as the config's `version: 2`. A v1 goreleaser cannot
+          # parse it at all.
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      # The one check the Go suite cannot make: that the SHIPPED binary carries
+      # its version stamp. An -X that silently did not apply produces a release
+      # that builds, publishes, and reports "dev" to every user.
+      - name: the published linux binary reports the tag
+        run: |
+          set -euo pipefail
+          got="$(./dist/investviews_linux_amd64_v1/investviews version)"
+          echo "$got"
+          want="${GITHUB_REF_NAME#v}"
+          case "$got" in
+            *"$want"*) ;;
+            *) echo "the built binary does not report $want"; exit 1 ;;
+          esac

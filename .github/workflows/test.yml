@@ -1,0 +1,89 @@
+# Runs on every push and every pull request, tag pushes included — which is why
+# .goreleaser.yaml does not repeat the suite in its `before` hooks: a tag that
+# cannot pass tests is already red next to its release.
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ⚠️ PINNED, NOT A RANGE. go.mod says `go 1.25`, which setup-go would happily
+  # satisfy with whatever 1.25.x it finds — so CI could build on a toolchain
+  # nobody here has. This is the version the CLI is developed against; bump it
+  # deliberately, together with go.mod.
+  GO_VERSION: "1.25.4"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: false
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      - run: go test ./...
+
+      # ⚠️ THE ONE THING A PLAIN `go test` CANNOT CHECK: that the release's -X
+      # ldflags actually land a version in the binary. The linker ignores an -X
+      # whose package path does not resolve — no error — so a rename would ship
+      # releases reporting "dev" forever with every test still green.
+      #
+      # This step links the test binary the same way the release links the real
+      # one, and tells the test (through INVESTVIEWS_TEST_EXPECT_STAMP) what it
+      # should find. The package path is derived from go.mod, then checked
+      # against .goreleaser.yaml, so the two cannot drift apart in silence.
+      #
+      # What it still does NOT prove: that the published artefact is stamped.
+      # Only running the built binary proves that, and the release workflow's
+      # goreleaser run is where that binary exists.
+      - name: the release ldflags stamp the binary
+        run: |
+          set -euo pipefail
+          pkg="$(go list -m)/internal/version"
+          stamp="9.9.9-citest"
+          if ! grep -qF -- "-X $pkg.Version=" .goreleaser.yaml; then
+            echo ".goreleaser.yaml does not stamp $pkg.Version — the release would report \"dev\""
+            exit 1
+          fi
+          INVESTVIEWS_TEST_EXPECT_STAMP="$stamp" \
+            go test -count=1 -ldflags "-X $pkg.Version=$stamp" ./internal/version/ ./cmd/investviews/
+
+  # The release config is only exercised by a v* tag, which is the worst moment
+  # to discover it does not parse. `check` is seconds and needs no credentials.
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: false
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check

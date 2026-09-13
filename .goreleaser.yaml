@@ -1,0 +1,139 @@
+# Release pipeline for the investviews CLI.
+#
+# Written against goreleaser v2.18.1 and validated with `goreleaser check`.
+# ⚠️ THIS IS A v2 CONFIG. Several v1 keys were renamed (archives[].format →
+# formats, snapshot.name_template → version_template, brews → homebrew_casks),
+# and a v1 config does not parse under v2 at all.
+#
+# Verify a change without releasing anything:
+#
+#   goreleaser check
+#   goreleaser release --snapshot --clean      # local, no token, publishes nothing
+#   ./dist/investviews_darwin_arm64_v8.0/investviews version
+#
+# The last line is the only check that the SHIPPED binary carries its stamp; the
+# Go suite can only check the mechanism, never the artefact.
+version: 2
+
+project_name: investviews
+
+before:
+  hooks:
+    # The test suite is not repeated here: .github/workflows/test.yml runs on
+    # every push, tag pushes included, so a tag that cannot pass tests is
+    # already red beside the release.
+    - go mod tidy
+
+builds:
+  - id: investviews
+    main: ./cmd/investviews
+    binary: investviews
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # ⚠️ THE PACKAGE PATH BELOW IS THE MODULE PATH, WHICH IS LOWERCASE
+    # (github.com/investviews/...), while the GitHub repository is
+    # Investviews/investviews-cli with a capital I. Both spellings are
+    # deliberate. An -X whose path does not resolve is ignored by the linker in
+    # SILENCE: the release builds, publishes, and reports "dev" forever.
+    # internal/version/version_test.go pins these three strings against the
+    # module line in go.mod so a rename fails in `go test`, before a tag exists.
+    ldflags:
+      - -s -w
+      - -X github.com/investviews/investviews-cli/internal/version.Version={{ .Version }}
+      - -X github.com/investviews/investviews-cli/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/investviews/investviews-cli/internal/version.Date={{ .Date }}
+    # Reproducible: the binary's timestamp is the commit's, not the build's.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: investviews
+    ids:
+      - investviews
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  # A snapshot is never a real version, and its name says so: 0.1.0 → 0.1.1-next.
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: Investviews
+    name: investviews-cli
+  # A tag like v1.0.0-rc1 publishes as a pre-release without anyone deciding again.
+  prerelease: auto
+  footer: |
+    ---
+    Docs: https://docs.investviews.ai
+
+# ✅ The tap repository EXISTS: `Investviews/homebrew-tap`, public, default branch
+# `main`, created by the operator 2026-09-12 and scaffolded with a README. The
+# `branch: main` below matches it. Nothing here is blocked on the repository any
+# more.
+#
+# ⚠️ WHAT IS STILL MISSING IS THE TOKEN. Pushing the cask needs write access to
+# that OTHER repository, exported as HOMEBREW_TAP_GITHUB_TOKEN in the release
+# workflow; this repository's automatic GITHUB_TOKEN cannot write to it. Without
+# the secret a real `goreleaser release` reaches this pipe and fails AFTER the
+# GitHub release is already published — the binaries land, the tap step is what
+# breaks. Snapshot runs never reach it, so a green snapshot proves nothing about
+# this pipe.
+#
+# ⚠️ A CASK, NOT A FORMULA. `brews:` (the formula) is deprecated in goreleaser
+# v2 in favour of `homebrew_casks:`, and `goreleaser check` fails the build on a
+# deprecated key. The generated cask does carry on_linux URLs, but Homebrew
+# installs casks on macOS only — so `brew install` is the macOS path and Linux
+# users take the release tarball. That is why linux/amd64 and linux/arm64 are
+# still built and archived above.
+homebrew_casks:
+  - name: investviews
+    binaries:
+      - investviews
+    ids:
+      - investviews
+    repository:
+      owner: Investviews
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://docs.investviews.ai
+    description: Query the InvestViews public API from the shell
+    license: MIT
+    commit_author:
+      name: investviews-release
+      email: noreply@investviews.ai
+    hooks:
+      post:
+        # The binaries are not notarized, so macOS quarantines anything the cask
+        # downloaded and Gatekeeper refuses to run it. Removing the attribute at
+        # install time is what makes `investviews` runnable straight after
+        # `brew install`.
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/investviews"]
+          end

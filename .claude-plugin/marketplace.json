@@ -1,0 +1,24 @@
+{
+  "name": "investviews-cli",
+  "owner": {
+    "name": "InvestViews",
+    "url": "https://investviews.ai"
+  },
+  "metadata": {
+    "description": "The InvestViews command-line client and the skill that drives it.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "investviews",
+      "source": "./",
+      "description": "Real-estate market figures by place. Free geography discovery, metered statistics, and the workflow that keeps the two apart.",
+      "category": "data",
+      "keywords": [
+        "real-estate",
+        "property",
+        "market-data"
+      ]
+    }
+  ]
+}
