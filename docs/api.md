@@ -101,9 +101,18 @@ page 2 to ask for. Written as the rule rather than as a root special case, it al
 endpoint that behaves this way.
 
 Hex ids come back as **decimal int64 strings** (`"613498076398616575"`), not `87…` hex strings.
-`/stats/*` also accepts the canonical H3 form (`8839540ad1fffff`); the CLI accepts both and refuses
-anything that is not a cell index before it sends the request, since `--h3 -` reads a pipe and a
-rendered listing tokenises into words that look like ids.
+`/stats/*` also accepts the canonical H3 form (`8839540ad1fffff`); the CLI accepts both, and before
+it sends the request it checks each value against the **H3 bit layout** — the reserved bit, the cell
+mode, the mode-dependent bits, the base cell (0..121), and all 15 digit slots against the
+resolution. Anything not shaped that way is refused locally and costs nothing, which is what matters
+for `--h3 -`, since it reads a pipe and a rendered listing tokenises into words that look like ids.
+
+**One thing the local check cannot rule out**, deliberately: twelve base cells are pentagons and
+some digit paths below them do not exist on the grid. Ruling that out needs the pentagon table, so a
+structurally well-formed id naming an impossible pentagon path is sent and answered `400` by the
+server. That is the only invalid id the CLI still spends a request on — the trade is deliberate,
+because wrongly refusing a real cell would break `--h3` outright while a false accept costs one
+request.
 
 ## Errors
 

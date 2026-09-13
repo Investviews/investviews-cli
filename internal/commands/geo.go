@@ -503,9 +503,9 @@ reader: a header line, an availability sentence, a "more cells" hint and the
 cost line surround the ids. Piped into "stats current --h3 -" those words are
 split up and sent as cell ids to a METERED endpoint. --ids-only prints the ids
 and nothing else, and puts the cost line on stderr so stdout stays a clean
-stream. ("stats current" also refuses a non-cell locally now, so the mistake is
-caught either way — but --ids-only is what makes the pipe correct rather than
-merely refused.)
+stream. ("stats current" also refuses anything that is not shaped like a cell
+id locally now, so the mistake is caught either way — but --ids-only is what
+makes the pipe correct rather than merely refused.)
 
 ⚠️ Cell ids are DECIMAL int64 strings (613498076398616575), not 87… hex
 strings.

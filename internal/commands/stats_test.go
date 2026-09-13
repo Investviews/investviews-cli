@@ -2,7 +2,6 @@ package commands
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -69,7 +68,7 @@ func TestStatsCurrentRefusesAHalfNamedCircle(t *testing.T) {
 func TestStatsCurrentSendsEveryFilterItWasGiven(t *testing.T) {
 	res := run(t, meteredJSON(currentBody),
 		"stats", "current",
-		"--h3", "613498076398616575,613498076398616576", "--h3", "613498076398616577",
+		"--h3", "613498076398616575,613498076402810879", "--h3", "613498076568485887",
 		"--rooms", "2,3", "--ad-type", "real_estate_commercial", "--ad-sub-type", "rent",
 		"--min-size", "40", "--max-size", "120",
 		"--min-price-usd", "150000", "--max-price-usd", "400000",
@@ -80,7 +79,7 @@ func TestStatsCurrentSendsEveryFilterItWasGiven(t *testing.T) {
 
 	query := res.lastQuery()
 	for _, want := range []string{
-		"h3=613498076398616575%2C613498076398616576%2C613498076398616577",
+		"h3=613498076398616575%2C613498076402810879%2C613498076568485887",
 		"rooms=2%2C3",
 		"ad_type=real_estate_commercial",
 		"ad_sub_type=rent",
@@ -113,12 +112,12 @@ func TestStatsCurrentAcceptsRadiusAsAnAliasForRadiusKm(t *testing.T) {
 }
 
 func TestStatsCurrentReadsCellsFromStandardInput(t *testing.T) {
-	stdin := strings.NewReader("613498076398616575\n613498076398616576\n\n")
+	stdin := strings.NewReader("613498076398616575\n613498076402810879\n\n")
 	res := runWithStdin(t, meteredJSON(currentBody), stdin, "stats", "current", "--h3", "-")
 	if res.err != nil {
 		t.Fatalf("stats current: %v", res.err)
 	}
-	if !strings.Contains(res.lastQuery(), "h3=613498076398616575%2C613498076398616576") {
+	if !strings.Contains(res.lastQuery(), "h3=613498076398616575%2C613498076402810879") {
 		t.Errorf("query = %q", res.lastQuery())
 	}
 }
@@ -296,6 +295,22 @@ func TestStatsHistoryEmptyRangeIsANormalAnswer(t *testing.T) {
 // --h3 is checked before it is spent
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ⚠️ REAL CELLS, NOT A COUNTER. These are the first 20 ids `investviews geo
+// hexes R344953 --ids-only` returned from production on 2026-09-14.
+//
+// Earlier versions of these tests built cell lists by adding 1, 2 or 2*i to a
+// real id. Every one of those is a MALFORMED cell — the low bits are the
+// unused digit slots, which must all be 7 — and the check only tolerated them
+// because it read the mode bits and nothing else. A fixture that the product
+// would refuse in production teaches a test nothing.
+var realCells = []string{
+	"613498076398616575", "613498076402810879", "613498076568485887", "613498076578971647",
+	"613498076637691903", "613498076650274815", "613498076652371967", "613498076654469119",
+	"613498076656566271", "613498076658663423", "613498076660760575", "613498076662857727",
+	"613498076667052031", "613498076669149183", "613498076675440639", "613498076677537791",
+	"613498076683829247", "613498076685926399", "613498076688023551", "613498076690120703",
+}
+
 // hexesListing is the EXACT shape `investviews geo hexes` prints for a reader,
 // transcribed from a live run against València on 2026-09-13. It is the thing
 // the help text used to tell people to pipe into `stats current --h3 -`, and
@@ -385,6 +400,41 @@ func TestStatsCurrentChecksEveryRouteIntoH3(t *testing.T) {
 	}
 }
 
+// ⚠️ THE SAME THREE ROUTES, WITH AN ID THAT CARRIES THE CELL MODE. A rendered
+// listing's words never do, so the mode test alone caught those — but it let
+// through anything mode-shaped, and a mode-shaped non-cell reaches the METERED
+// endpoint and earns a server 400 instead of a free local refusal.
+//
+// 8839540ad1ffffe is one bit off the real cell 8839540ad1fffff: its last
+// unused digit is 6 rather than 7. 613498079194120192 is the decimal form of
+// the same class of fault on a res-8 València cell.
+func TestStatsCurrentChecksTheWHOLEIdOnEveryRouteNotJustTheModeBits(t *testing.T) {
+	cases := []struct {
+		name  string
+		args  []string
+		stdin string
+		token string
+	}{
+		{"repeated flag, hex form", []string{"stats", "current", "--h3", "8839540ad1fffff", "--h3", "8839540ad1ffffe"}, "", `"8839540ad1ffffe"`},
+		{"comma list, hex form", []string{"stats", "current", "--h3", "8839540ad1fffff,8839540ad1ffffe"}, "", `"8839540ad1ffffe"`},
+		{"standard input, hex form", []string{"stats", "current", "--h3", "-"}, "8839540ad1ffffe\n", `"8839540ad1ffffe"`},
+		{"comma list, decimal form", []string{"stats", "current", "--h3", "613498079194120192"}, "", `"613498079194120192"`},
+		{"stats history takes the same check", []string{"stats", "history", "--h3", "8839540ad1ffffe"}, "", `"8839540ad1ffffe"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := runWithStdin(t, meteredJSON(currentBody), strings.NewReader(tc.stdin), tc.args...)
+			if res.err == nil {
+				t.Fatal("a mode-shaped non-cell must be refused locally, not paid for")
+			}
+			if res.hits() != 0 {
+				t.Errorf("sent %d METERED requests; a local refusal must send none", res.hits())
+			}
+			contains(t, res.err.Error(), tc.token)
+		})
+	}
+}
+
 // A canonical H3 string is a documented, legal form on /stats/*, so the check
 // must not narrow the CLI to decimal only.
 func TestStatsCurrentAcceptsTheCanonicalH3Form(t *testing.T) {
@@ -394,6 +444,30 @@ func TestStatsCurrentAcceptsTheCanonicalH3Form(t *testing.T) {
 	}
 	if !strings.Contains(res.lastQuery(), "h3=8839540ad1fffff") {
 		t.Errorf("the cell must go out verbatim, got %q", res.lastQuery())
+	}
+}
+
+// ⚠️ THE CHECK MUST NOT BE RES-8-SHAPED. The API only ever emits res 8, so a
+// bit test tuned to what a pipe carries would still pass every test here while
+// silently refusing a coarse or fine cell a caller typed — and /stats/* takes
+// any resolution. These are real cells from an independent H3 implementation
+// (see internal/api/h3_test.go), one per corner of the range.
+func TestStatsCurrentAcceptsCellsAwayFromRes8(t *testing.T) {
+	for _, cell := range []string{
+		"577481099093999615", // res 0, València
+		"595483686443417599", // res 4, València
+		"645023276585059220", // res 15, València
+		"8009fffffffffff",    // res 0 on a pentagon base cell, canonical form
+	} {
+		t.Run(cell, func(t *testing.T) {
+			res := run(t, meteredJSON(currentBody), "stats", "current", "--h3", cell)
+			if res.err != nil {
+				t.Fatalf("a real cell must be accepted whatever its resolution: %v", res.err)
+			}
+			if res.hits() != 1 {
+				t.Fatalf("hits = %d, want 1", res.hits())
+			}
+		})
 	}
 }
 
@@ -534,12 +608,8 @@ func hintCommand(t *testing.T, out string) []string {
 // A long cell list is named by count rather than reprinted — but the hint must
 // still not look like a command missing its selector.
 func TestTheEmptyStatsHintNamesALongCellListByCount(t *testing.T) {
-	cells := make([]string, 0, 20)
-	for i := 0; i < 20; i++ {
-		cells = append(cells, strconv.FormatUint(613498076398616575+uint64(i)*2, 10))
-	}
 	res := run(t, meteredJSON(emptyStatsBody(`{"selector":"h3","resolution":8,"hex_count":20}`)),
-		"stats", "current", "--h3", strings.Join(cells, ","))
+		"stats", "current", "--h3", strings.Join(realCells, ","))
 	if res.err != nil {
 		t.Fatalf("stats current: %v", res.err)
 	}

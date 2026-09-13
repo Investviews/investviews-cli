@@ -397,7 +397,7 @@ func TestPlaceHexesAllIsUnaffectedByTheOffsetPageSizeRule(t *testing.T) {
 		  "hexes":["613498076398616575","613498076398616576","613498076398616577"],
 		  "next_cursor":"c1","prices_available":true,"reports_available":true}`,
 		`{"geo_id":"R1","name":"P","level":"city","country":"es","h3_res":8,
-		  "hexes":["613498076398616578"],"next_cursor":null,
+		  "hexes":["613498076578971647"],"next_cursor":null,
 		  "prices_available":true,"reports_available":true}`,
 	}
 	var n int

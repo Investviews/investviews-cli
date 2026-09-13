@@ -171,9 +171,12 @@ investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 
 
 The plain `geo hexes` output is written for a reader — a header line, an availability sentence and
 a cost line around the ids — so piping it **without** `--ids-only` sends those words to the metered
-endpoint as cell ids. `--ids-only` prints the ids and nothing else. Every `--h3` value is checked to
-be a real cell before anything is sent, so the wrong pipe now fails locally and free instead of
-spending a request. Use `--all` as well, or the answer describes only the first page of the place.
+endpoint as cell ids. `--ids-only` prints the ids and nothing else. Every `--h3` value is checked
+against the H3 bit layout before anything is sent — mode, resolution, base cell and all 15 digit
+slots — so a word from a rendered listing fails locally and free instead of spending a request. (The
+one id that still gets sent is a well-formed one naming a pentagon path that does not exist; the
+server answers `400`. Ruling that out locally needs the pentagon table, which the CLI does not
+carry.) Use `--all` as well, or the answer describes only the first page of the place.
 
 ### Citing the answer
 

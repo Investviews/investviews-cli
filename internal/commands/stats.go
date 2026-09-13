@@ -34,13 +34,15 @@ cost, taken from the quota headers the server sent back.
 // Only --h3 values are validated for content, and the rule that decides it is
 // STRUCTURAL vs VOCABULARY:
 //
-//   - A cell id is a STRUCTURE. An H3 index either carries the cell mode or it
-//     does not, and no version of this API can widen that. --h3 is also the
-//     only flag on this metered surface fed by text the caller never typed —
-//     `--h3 -` reads standard input, which is how a listing is piped in — so
-//     it is the one place rendered prose can turn into a metered request. It
-//     is checked; see api.ValidateH3Cells. (The other stdin reader in this
-//     CLI is `auth login`, which sends nothing anywhere.)
+//   - A cell id is a STRUCTURE. Its 64 bits carry a fixed layout — mode,
+//     resolution, base cell, 15 digit slots — and no version of this API can
+//     widen that layout. --h3 is also the only flag on this metered surface
+//     fed by text the caller never typed — `--h3 -` reads standard input,
+//     which is how a listing is piped in — so it is the one place rendered
+//     prose can turn into a metered request. The layout is checked; see
+//     api.IsH3Cell, including what it deliberately leaves to the server.
+//     (The other stdin reader in this CLI is `auth login`, which sends
+//     nothing anywhere.)
 //   - --ad-type, --currency, --rooms, --ad-sub-type and --geo-id are
 //     VOCABULARIES the server owns and v1 is additive-only, so a whitelist
 //     copied in here would go stale the first time one grows and would then
@@ -83,7 +85,8 @@ func (s *selectorFlags) register(cmd *cobra.Command) {
 		"H3 cells: repeat the flag, comma-join them, or pass - to read them from standard input "+
 			"(pipe `geo hexes <id> --all --ids-only`, never the plain listing). "+
 			"Ids are DECIMAL strings (613498076398616575), not 87… hex. "+
-			"Every value is checked to be a cell BEFORE anything is sent")
+			"Every value is checked against the H3 bit layout BEFORE anything is sent, so a "+
+			"word from a rendered listing is refused locally and free")
 	f.Float64Var(&s.lat, "lat", 0, "circle centre latitude; requires --lng and --radius-km")
 	f.Float64Var(&s.lng, "lng", 0, "circle centre longitude; requires --lat and --radius-km")
 	f.Float64Var(&s.radiusKm, "radius-km", 0, "circle radius in kilometres, at most 500 (alias: --radius)")
@@ -258,9 +261,9 @@ func newStatsCurrentCmd(deps Deps) *cobra.Command {
 ⚠️ --ids-only IS NOT OPTIONAL IN THAT PIPE. The plain "geo hexes" listing is
 written for a reader — a header, an availability sentence and a cost line
 around the ids — and piping it here splits those words up and sends them as
-cells. Every --h3 value is now checked to be a cell before anything is sent, so
-the plain pipe fails locally and free rather than at the server; --ids-only is
-what makes it work.
+cells. Every --h3 value is now checked against the H3 bit layout before
+anything is sent, so the plain pipe fails locally and free rather than at the
+server; --ids-only is what makes it work.
 
 ⚠️ METERED, against the "current" group. Resolve the place first with the free
 geo commands, and check its availability line before spending this.

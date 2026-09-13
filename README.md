@@ -47,7 +47,8 @@ investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 
 header line, an availability sentence and the cost line surround the ids — and piping that sends
 those words to a **metered** endpoint as if they were cells. `--ids-only` prints the ids and nothing
 else, and puts the cost line on stderr so stdout stays a clean stream. `stats` also checks every
-`--h3` value is a cell before it sends anything, so the plain pipe now fails locally and free.
+`--h3` value against the H3 bit layout before it sends anything, so the plain pipe now fails locally
+and free.
 
 ### ⚠️ `--level` means two different things
 
