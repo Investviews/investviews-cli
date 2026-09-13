@@ -330,3 +330,89 @@ func hexPageBody(hexes []string, nextCursor string) string {
 		`"hexes":[` + strings.Join(quoted, ",") + `],"next_cursor":` + nextCursor + `,` +
 		`"prices_available":true,"reports_available":true}`
 }
+
+// ⚠️ A PAGE LONGER THAN THE LIMIT MEANS THE SERVER IGNORED THE LIMIT, AND AN
+// ENDPOINT THAT IGNORES THE LIMIT IS NOT PAGING.
+//
+// /geo does this at its root: `?limit=10&page=1|2|3` each answer with all 37
+// countries. The walker used to see 37 >= 10, ask for page 2, get the same 37
+// ids back and be caught by the stall guard — so `geo browse --all --limit 10`
+// exited 1 on a perfectly well-formed query. The guard was right; the walker
+// should never have needed it.
+func TestGeoBrowseAllStopsWhenTheServerIgnoresTheLimit(t *testing.T) {
+	const ignoredLimit = 37
+	rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		freeHeaders(w)
+		// Whatever limit or page is asked for, answer with all 37 rows —
+		// the measured behaviour of /geo with no parent.
+		writeJSON(w, 200, geoPageBody(ignoredLimit, ignoredLimit, 1))
+	})
+
+	var pages int
+	var rows []GeoResult
+	err := rec.client.GeoBrowseAll(context.Background(), GeoParams{Limit: 10}, func(p *GeoResponse) error {
+		pages++
+		rows = append(rows, p.Results...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("GeoBrowseAll: %v — a server that ignores the limit is not an error", err)
+	}
+	if errors.Is(err, ErrPagingStalled) {
+		t.Fatal("the stall guard fired; the walker should have stopped before reaching it")
+	}
+	if pages != 1 {
+		t.Errorf("pages = %d, want 1 — there is no page 2 to ask for", pages)
+	}
+	if len(rows) != ignoredLimit {
+		t.Errorf("rows = %d, want %d — every row is still handed to the caller", len(rows), ignoredLimit)
+	}
+	if rec.hits() != 1 {
+		t.Errorf("hits = %d, want 1 — a second request would fetch the same rows again", rec.hits())
+	}
+}
+
+// The stall guard stays, and still fires on the case it was built for: a
+// server that repeats a FULL page, which is not "the limit was ignored" and
+// would otherwise spin forever. Pinned so the rule above cannot be widened
+// into swallowing it.
+func TestGeoBrowseAllStillReportsARepeatedFullPage(t *testing.T) {
+	rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		freeHeaders(w)
+		writeJSON(w, 200, geoPageBody(1000, 20, 1)) // always page 1, exactly the limit
+	})
+	err := rec.client.GeoBrowseAll(context.Background(), GeoParams{Limit: 20}, func(*GeoResponse) error { return nil })
+	if !errors.Is(err, ErrPagingStalled) {
+		t.Fatalf("err = %v, want ErrPagingStalled", err)
+	}
+}
+
+// The other two models must not have been touched by the offset rule.
+// /geo/{geo_id}/hexes ends on a null cursor, not on a page size — a server
+// that returns more cells than the limit asked for is still paging, because
+// the cursor says so.
+func TestPlaceHexesAllIsUnaffectedByTheOffsetPageSizeRule(t *testing.T) {
+	pages := []string{
+		`{"geo_id":"R1","name":"P","level":"city","country":"es","h3_res":8,
+		  "hexes":["613498076398616575","613498076398616576","613498076398616577"],
+		  "next_cursor":"c1","prices_available":true,"reports_available":true}`,
+		`{"geo_id":"R1","name":"P","level":"city","country":"es","h3_res":8,
+		  "hexes":["613498076398616578"],"next_cursor":null,
+		  "prices_available":true,"reports_available":true}`,
+	}
+	var n int
+	rec := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		freeHeaders(w)
+		writeJSON(w, 200, pages[n])
+		n++
+	})
+	// limit 2, but the first page answers with 3 and a cursor: the cursor
+	// is the end signal here, so the walk must continue.
+	cells, _, err := rec.client.PlaceHexesCollect(context.Background(), "R1", HexesParams{Limit: 2})
+	if err != nil {
+		t.Fatalf("PlaceHexesCollect: %v", err)
+	}
+	if len(cells) != 4 {
+		t.Errorf("cells = %d, want 4 — a cursor walk ends on a null cursor, never on a page size", len(cells))
+	}
+}

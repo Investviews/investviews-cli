@@ -118,7 +118,8 @@ number of steps.** The property that matters is that no name is ever guessed.
 Two other notes on `geo browse`:
 
 - At the root (no `--parent`) the API **ignores `--limit`** and returns all 37 countries. `--limit`
-  works under a `--parent`.
+  works under a `--parent`. `--all` handles this: a page that comes back **longer** than the limit
+  means the server ignored it, so there is no second page to ask for and the walk stops there.
 - `--all` pages through everything; on `geo search` it is meaningless and the CLI says so.
 
 ## 3. Decide whether to spend — the three-state availability signal
@@ -156,6 +157,23 @@ figures on the way out; it never changes which listings are selected.
 
 A territory is named by **exactly one** of `--geo-id`, `--h3`, or `--lat`/`--lng`/`--radius-km`.
 Two selectors are refused locally, before any request, so the mistake costs nothing.
+
+⚠️ **`--res` belongs to the circle alone.** It is refused locally alongside `--geo-id` (a place is
+answered as one row from its own boundary, so there is no cell size to choose) and alongside `--h3`
+(a cell states its own resolution). If an empty answer makes you want a coarser view of a
+**place**, the move is a wider filter set or `stats history`, never `--res`.
+
+### ⚠️ Asking about cells: pipe with `--ids-only`
+
+```sh
+investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 -
+```
+
+The plain `geo hexes` output is written for a reader — a header line, an availability sentence and
+a cost line around the ids — so piping it **without** `--ids-only` sends those words to the metered
+endpoint as cell ids. `--ids-only` prints the ids and nothing else. Every `--h3` value is checked to
+be a real cell before anything is sent, so the wrong pipe now fails locally and free instead of
+spending a request. Use `--all` as well, or the answer describes only the first page of the place.
 
 ### Citing the answer
 
@@ -207,7 +225,7 @@ A `429` is **never** a quota problem — it is a burst limit. Wait and retry.
 | `geo browse [--parent ID] [--level L] [--limit N] [--page N] [--all]` | free | walk the geography from the countries down |
 | `geo search <name> [--country cc] [--level L] [--limit N]` | free | resolve a name to a `geo_id` |
 | `geo lookup --h3 ID` or `--lat --lng [--res N]` | free | name the zones containing one cell or point |
-| `geo hexes <geo_id> [--all]` | free | list a place's H3 cells |
+| `geo hexes <geo_id> [--all] [--ids-only]` | free | list a place's H3 cells; `--ids-only` prints ids alone, for a pipe |
 | `coverage [--country cc]` | free | which markets are served, and how fresh each is |
 | `usage` | free | what this token has spent and has left |
 | **`stats current --geo-id ID`** | **METERED** | figures for the newest built period |

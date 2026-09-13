@@ -162,7 +162,23 @@ func (c *Client) GeoBrowseAll(ctx context.Context, params GeoParams, fn func(*Ge
 		if err := fn(resp); err != nil {
 			return err
 		}
-		if len(resp.Results) < limit {
+
+		// ⚠️ ONLY A PAGE THAT IS EXACTLY THE LIMIT CAN HAVE A NEXT ONE.
+		//
+		// Shorter means the listing ended — that is the documented signal.
+		// LONGER means the server ignored the limit, and an endpoint that
+		// ignores the limit is not paging at all: there is no page 2, and
+		// asking for one returns the same rows again. /geo does exactly
+		// this at its root, where it answers with every country whatever
+		// limit is asked for, but the rule is written as the rule rather
+		// than as a root special case, so it also covers the next endpoint
+		// that behaves this way.
+		//
+		// The stall guard above stays and is still needed: it catches a
+		// server that repeats a FULL page. This only means the walker no
+		// longer has to be caught by it — `--all --limit 10` at the root
+		// used to exit 1 on a query that was perfectly well formed.
+		if len(resp.Results) != limit {
 			return nil
 		}
 	}

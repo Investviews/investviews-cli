@@ -14,7 +14,7 @@ Command-line client for the [InvestViews public API](https://docs.investviews.ai
 | `geo browse` | free | walk the geography from the countries down |
 | `geo search <name>` | free | resolve a name to a `geo_id` |
 | `geo lookup` | free | name the zones containing one cell or one point |
-| `geo hexes <geo_id>` | free | list a place's H3 cells |
+| `geo hexes <geo_id>` | free | list a place's H3 cells (`--ids-only` for a pipe) |
 | `coverage` | free | which markets are served, and how fresh each is |
 | `usage` | free | what this token has spent and has left |
 | **`stats current`** | **METERED** | figures for the newest built period |
@@ -36,6 +36,18 @@ investviews stats current --geo-id R5326784       # the place you reached
 ```
 
 Every row prints the `geo_id` the next call takes, so you never guess a name.
+
+### Piping cell ids into `stats`
+
+```sh
+investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 -
+```
+
+⚠️ **`--ids-only` is not optional here.** The plain `geo hexes` output is written for a reader — a
+header line, an availability sentence and the cost line surround the ids — and piping that sends
+those words to a **metered** endpoint as if they were cells. `--ids-only` prints the ids and nothing
+else, and puts the cost line on stderr so stdout stays a clean stream. `stats` also checks every
+`--h3` value is a cell before it sends anything, so the plain pipe now fails locally and free.
 
 ### ⚠️ `--level` means two different things
 

@@ -63,10 +63,10 @@ This is the command to reach for when you have NO name to search. With no
 argument it lists the countries; --parent takes any geo_id a previous call
 printed, so you descend spending only ids the API gave you.
 
-  investviews geo browse                          the countries
-  investviews geo browse --parent es              Spain's top level
-  investviews geo browse --parent es --level city EVERY city in Spain
-  investviews geo browse --parent R349055         that region's direct children
+  investviews geo browse                           # the countries
+  investviews geo browse --parent es               # Spain's top level
+  investviews geo browse --parent es --level city  # EVERY city in Spain
+  investviews geo browse --parent R349055          # that region's direct children
 
 ⚠️ --level MEANS TWO DIFFERENT THINGS, and which one depends on --parent.
 Under a COUNTRY it names a whole level of that country — "--parent es --level
@@ -202,13 +202,27 @@ func browseHeader(parentFlag, level string, parent *api.GeoResult) string {
 
 // renderEmptyBrowse is the normal answer for an empty listing. It is not an
 // error, it does not exit non-zero, and it always names the next move.
+//
+// ⚠️ The next move is spelled with the id THIS call used, never as a
+// placeholder. The caller already holds that id — it is what it passed as
+// --parent — so a hint reading "<its geo_id>" asks it to go and find something
+// it is standing on, and a hint is only worth printing if it can be run.
 func renderEmptyBrowse(w io.Writer, parentFlag, level string, parent *api.GeoResult) {
 	name := strings.TrimSpace(parentFlag)
-	if parent != nil && parent.Name != "" {
-		name = parent.Name
+	id := strings.TrimSpace(parentFlag)
+	if parent != nil {
+		if parent.Name != "" {
+			name = parent.Name
+		}
+		if parent.GeoID != "" {
+			id = parent.GeoID // what the API resolved beats what was typed
+		}
 	}
 	if name == "" {
 		name = "this listing"
+	}
+	if id == "" {
+		id = "<its geo_id>"
 	}
 
 	if level != "" {
@@ -216,13 +230,14 @@ func renderEmptyBrowse(w io.Writer, parentFlag, level string, parent *api.GeoRes
 		fmt.Fprintln(w, "Levels are SKIPPED, not shifted: a city's direct children are macrozones, so")
 		fmt.Fprintln(w, "asking a city for microzones legitimately returns nothing, and a city whose")
 		fmt.Fprintln(w, "province is blank hangs straight off its region.")
-		fmt.Fprintf(w, "Next: drop --level to see what %s actually has below it.\n", name)
+		fmt.Fprintf(w, "Next: drop --level — `investviews geo browse --parent %s` — to see what %s\n", id, name)
+		fmt.Fprintln(w, "actually has below it.")
 		return
 	}
 	fmt.Fprintf(w, "%s has no children in the tree — the walk ends here. That is a NORMAL answer,\n", name)
 	fmt.Fprintln(w, "not an error: fill drops down the tree, and most branches terminate above")
 	fmt.Fprintln(w, "neighbourhood level.")
-	fmt.Fprintln(w, "Next: query this place itself with `investviews stats current --geo-id <its geo_id>`.")
+	fmt.Fprintf(w, "Next: query this place itself with `investviews stats current --geo-id %s`.\n", id)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,11 +454,25 @@ func renderPoint(w io.Writer, point *api.Point) {
 	})
 }
 
+// availabilityForPoint names a move that exists for THIS answer.
+//
+// ⚠️ It cannot offer "spend a zone's geo_id" unconditionally: a cell can come
+// back with no zones at all, or with zones that carry no geo_id (this is the
+// one endpoint whose zones can be unaddressable), and the line is printed
+// ABOVE the zone table, so it would be promising an id the reader is then told
+// does not exist. The cell's own id is always there and is always spendable.
 func availabilityForPoint(point *api.Point) string {
 	if !point.PricesAvailable {
 		return "no prices here — dead end, do not spend a metered call"
 	}
-	return "prices available — spend a zone's geo_id, or this cell's id, on stats current"
+	spend := fmt.Sprintf("prices available — spend this cell: `investviews stats current --h3 %s`", point.H3)
+	for _, zone := range point.Zones {
+		if zone.Addressable() {
+			return spend + ", or an addressable zone's geo_id below"
+		}
+	}
+	// Either no zones, or none of them carries a geo_id.
+	return spend + " (no zone here carries a geo_id to spend)"
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -452,10 +481,11 @@ func availabilityForPoint(point *api.Point) string {
 
 func newGeoHexesCmd(deps Deps) *cobra.Command {
 	var (
-		geoID  string
-		cursor string
-		limit  int
-		all    bool
+		geoID   string
+		cursor  string
+		limit   int
+		all     bool
+		idsOnly bool
 	)
 
 	cmd := &cobra.Command{
@@ -466,6 +496,16 @@ straight into "stats current --h3".
 
   investviews geo hexes R344953
   investviews geo hexes --geo-id R344953 --all
+  investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 -
+
+⚠️ PIPE WITH --ids-only, NEVER WITHOUT IT. The default output is written for a
+reader: a header line, an availability sentence, a "more cells" hint and the
+cost line surround the ids. Piped into "stats current --h3 -" those words are
+split up and sent as cell ids to a METERED endpoint. --ids-only prints the ids
+and nothing else, and puts the cost line on stderr so stdout stays a clean
+stream. ("stats current" also refuses a non-cell locally now, so the mistake is
+caught either way — but --ids-only is what makes the pipe correct rather than
+merely refused.)
 
 ⚠️ Cell ids are DECIMAL int64 strings (613498076398616575), not 87… hex
 strings.
@@ -483,6 +523,9 @@ invalid_cursor, and retrying it never succeeds — restart the listing with no
 	cmd.Flags().IntVar(&limit, "limit", 0,
 		fmt.Sprintf("cells per page, at most %d (server default %d)", api.HexesMaxLimit, api.HexesDefaultLimit))
 	cmd.Flags().BoolVar(&all, "all", false, "read every page, walking the cursor")
+	cmd.Flags().BoolVar(&idsOnly, "ids-only", false,
+		"print the cell ids and NOTHING else, one per line, for a pipe into `stats current --h3 -`; "+
+			"the cost line moves to stderr. --json wins if both are given")
 
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		client, err := deps.client()
@@ -494,6 +537,7 @@ invalid_cursor, and retrying it never succeeds — restart the listing with no
 			return err
 		}
 		params := api.HexesParams{Cursor: cursor, Limit: limit}
+		v.bare = idsOnly
 
 		if all {
 			var (
@@ -518,6 +562,10 @@ invalid_cursor, and retrying it never succeeds — restart the listing with no
 			page.Hexes = cells
 			page.NextCursor = nil
 			return v.emit(cmd, &page, meta, pages, api.EndpointGeoHexes, func(w io.Writer) {
+				if idsOnly {
+					renderHexIDs(w, &page)
+					return
+				}
 				renderHexes(w, &page, true)
 			})
 		}
@@ -526,11 +574,35 @@ invalid_cursor, and retrying it never succeeds — restart the listing with no
 		if err != nil {
 			return err
 		}
+		if idsOnly && page.HasMore() {
+			// ⚠️ A PARTIAL PIPE IS THE ONE FAILURE --ids-only CAN STILL
+			// CAUSE, and it is silent: the receiving command gets a valid
+			// list of cells that is only part of the place, and answers
+			// confidently about the part. Say so on stderr, where it does
+			// not contaminate the stream.
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"⚠️ partial: this is one page of %s's cells, not all of them. Add --all, or the "+
+					"answer downstream describes part of the place.\n", page.GeoID)
+		}
 		return v.emit(cmd, page, page.Meta, 1, api.EndpointGeoHexes, func(w io.Writer) {
+			if idsOnly {
+				renderHexIDs(w, page)
+				return
+			}
 			renderHexes(w, page, false)
 		})
 	}
 	return cmd
+}
+
+// renderHexIDs prints the cells and nothing at all besides — no header, no
+// availability line, no cursor hint. That is the whole point: it is the shape
+// `stats current --h3 -` reads, and every extra word in it would arrive there
+// as a cell id.
+func renderHexIDs(w io.Writer, page *api.HexPage) {
+	for _, cell := range page.Hexes {
+		fmt.Fprintln(w, cell)
+	}
 }
 
 // oneGeoID takes the id from the flag or the argument, and refuses both.

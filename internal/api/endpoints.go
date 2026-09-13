@@ -215,6 +215,15 @@ func (c *Client) GeoLookup(ctx context.Context, params LookupParams) (*Point, er
 		}
 	}
 
+	// Free endpoint, same check: a token that is not a cell gets a local
+	// answer naming it, rather than an unknown_place 404 that reads as "this
+	// cell is outside our geography" when the truth is "that was not a cell".
+	if hasCell {
+		if err := ValidateH3Cells([]string{params.H3}); err != nil {
+			return nil, err
+		}
+	}
+
 	v := url.Values{}
 	if hasCell {
 		setString(v, "h3", params.H3)
@@ -404,6 +413,20 @@ func (p StatsParams) selector() (string, error) {
 		return "", &ValidationError{
 			Selectors: []string{"lat", "lng", "radius_km"},
 			Message:   "the circle selector needs all three of lat, lng and radius_km",
+		}
+	}
+
+	// ⚠️ CELLS ARE CHECKED BEFORE THEY ARE SPENT, and this is the backstop
+	// every caller passes through — the CLI checks earlier so it can name
+	// the flag, but a cell list reaching here unchecked would go out on a
+	// METERED endpoint. See h3.go for why a digits-only test is not enough.
+	//
+	// It runs AFTER the one-territory guard on purpose: a request naming two
+	// selectors is told to drop one, not lectured about the contents of the
+	// one it is being told to drop.
+	if named[0] == "h3" {
+		if err := ValidateH3Cells(p.H3); err != nil {
+			return "", err
 		}
 	}
 

@@ -85,7 +85,18 @@ func All(deps Deps) []*cobra.Command {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // view is the one output decision every data command shares: the shape.
-type view struct{ asJSON bool }
+type view struct {
+	asJSON bool
+
+	// bare marks a TEXT shape written for a pipe rather than for a reader:
+	// nothing on stdout but the values themselves. It moves the cost line
+	// to stderr for exactly the reason --json does — a stream another
+	// command parses must not have prose mixed into it. `geo hexes
+	// --ids-only` is the only user of it, and it exists because the
+	// documented pipe into `stats current --h3 -` was being fed the header,
+	// the availability sentence and the cost line as if they were cell ids.
+	bare bool
+}
 
 // addJSONFlag registers --json and returns the view the command reads at run
 // time.
@@ -112,6 +123,12 @@ func (v view) emit(cmd *cobra.Command, payload any, meta api.Meta, requests int,
 	}
 	out := cmd.OutOrStdout()
 	text(out)
+	if v.bare {
+		// The cost line still goes out — a free call and a metered one must
+		// never look alike, whatever shape the payload is in.
+		fmt.Fprintln(cmd.ErrOrStderr(), cost)
+		return nil
+	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, cost)
 	return nil

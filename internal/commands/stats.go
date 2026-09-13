@@ -29,6 +29,31 @@ cost, taken from the quota headers the server sent back.
 	return cmd
 }
 
+// ⚠️ WHAT IS CHECKED LOCALLY, AND WHAT IS DELIBERATELY NOT.
+//
+// Only --h3 values are validated for content, and the rule that decides it is
+// STRUCTURAL vs VOCABULARY:
+//
+//   - A cell id is a STRUCTURE. An H3 index either carries the cell mode or it
+//     does not, and no version of this API can widen that. --h3 is also the
+//     only flag on this metered surface fed by text the caller never typed —
+//     `--h3 -` reads standard input, which is how a listing is piped in — so
+//     it is the one place rendered prose can turn into a metered request. It
+//     is checked; see api.ValidateH3Cells. (The other stdin reader in this
+//     CLI is `auth login`, which sends nothing anywhere.)
+//   - --ad-type, --currency, --rooms, --ad-sub-type and --geo-id are
+//     VOCABULARIES the server owns and v1 is additive-only, so a whitelist
+//     copied in here would go stale the first time one grows and would then
+//     refuse a request the API accepts. A stale local refusal is worse than a
+//     server 400: the 400 is one wasted request, the refusal is a capability
+//     the CLI has silently lost. The server's own message names the valid set;
+//     /meta/filters publishes it.
+//   - --res, --radius-km, --min-size and the rest are RANGES the plan and the
+//     product set, not shapes. resolution_not_in_plan is per-account, so the
+//     honest answer is the server's.
+//
+// Before adding a check here, ask which of the three it is.
+
 // selectorFlags is the territory and the filters, shared by both stats
 // commands so that one selector rule is written once.
 type selectorFlags struct {
@@ -55,12 +80,23 @@ func (s *selectorFlags) register(cmd *cobra.Command) {
 	f.StringVar(&s.geoID, "geo-id", "",
 		"a place ref (R344953) or a two-letter country code (es) — one parameter, both kinds")
 	f.StringArrayVar(&s.h3, "h3", nil,
-		"H3 cells: repeat the flag, comma-join them, or pass - to read them from standard input. "+
-			"Ids are DECIMAL strings (613498076398616575), not 87… hex")
+		"H3 cells: repeat the flag, comma-join them, or pass - to read them from standard input "+
+			"(pipe `geo hexes <id> --all --ids-only`, never the plain listing). "+
+			"Ids are DECIMAL strings (613498076398616575), not 87… hex. "+
+			"Every value is checked to be a cell BEFORE anything is sent")
 	f.Float64Var(&s.lat, "lat", 0, "circle centre latitude; requires --lng and --radius-km")
 	f.Float64Var(&s.lng, "lng", 0, "circle centre longitude; requires --lat and --radius-km")
 	f.Float64Var(&s.radiusKm, "radius-km", 0, "circle radius in kilometres, at most 500 (alias: --radius)")
-	f.IntVar(&s.res, "res", 0, "H3 resolution 4..8; refused alongside --h3, whose cells state their own")
+	// ⚠️ --res BELONGS TO THE CIRCLE ALONE. It is refused alongside --h3
+	// (cells state their own resolution) AND alongside --geo-id (a place is
+	// answered as one row from its own boundary, so there is no cell size to
+	// choose). Naming only --h3 here is what made the empty-answer hint
+	// suggest "a coarser --res" to a --geo-id caller, whose next command
+	// then failed locally.
+	f.IntVar(&s.res, "res", 0,
+		"H3 resolution 4..8, for the --lat/--lng/--radius-km circle ONLY; "+
+			"refused alongside --h3 (its cells state their own) and alongside --geo-id "+
+			"(a place is one row from its own boundary, with no cell size to choose)")
 
 	f.StringVar(&s.adType, "ad-type", "",
 		"asset class, e.g. real_estate_residential; see `investviews coverage --help` and /meta/filters")
@@ -129,6 +165,16 @@ func (s *selectorFlags) params(cmd *cobra.Command, in io.Reader) (api.StatsParam
 		}
 	}
 
+	// ⚠️ CELLS ARE CHECKED BEFORE THEY ARE SPENT — all three input routes.
+	// --h3 takes values from a repeated flag, a comma list and standard
+	// input, and the last is RENDERED TEXT: a header line, an availability
+	// sentence and a cost line all tokenise into words that sit in the list
+	// looking like ids. Unchecked they go out on a METERED endpoint. Checked
+	// here, the whole run costs nothing.
+	if err := api.ValidateH3Cells(cells); err != nil {
+		return api.StatsParams{}, err
+	}
+
 	params := api.StatsParams{
 		GeoID:     strings.TrimSpace(s.geoID),
 		H3:        cells,
@@ -159,7 +205,11 @@ func (s *selectorFlags) params(cmd *cobra.Command, in io.Reader) (api.StatsParam
 }
 
 // hexIDs expands the --h3 flag: repeats, comma lists, and "-" for standard
-// input, which is how a `geo hexes` listing is piped straight in.
+// input, which is how a `geo hexes … --ids-only` listing is piped straight in.
+//
+// ⚠️ It only SPLITS. Whether each token is a cell is decided after the
+// one-territory guard, so a request naming two selectors is told to drop one
+// rather than lectured about the contents of the one it is being told to drop.
 func hexIDs(values []string, in io.Reader) ([]string, error) {
 	var out []string
 	for _, value := range values {
@@ -167,6 +217,19 @@ func hexIDs(values []string, in io.Reader) ([]string, error) {
 			piped, err := readList(in)
 			if err != nil {
 				return nil, err
+			}
+			if len(piped) == 0 {
+				// An empty pipe would otherwise fall through as "no
+				// territory was named", which is true and unhelpful: the
+				// territory WAS named, by a listing that turned out to be
+				// empty, and that is the thing to go and look at.
+				return nil, &api.ValidationError{
+					Parameter: "h3",
+					Message: "--h3 - read standard input and found no cell ids. " +
+						"`investviews geo hexes <geo_id> --ids-only` prints nothing when a place " +
+						"holds no cells at a resolution this API publishes, and an empty list names " +
+						"no territory. Nothing was sent, so this cost no quota",
+				}
 			}
 			out = append(out, piped...)
 			continue
@@ -190,7 +253,14 @@ func newStatsCurrentCmd(deps Deps) *cobra.Command {
 
   investviews stats current --geo-id R344953
   investviews stats current --geo-id es --ad-type real_estate_commercial
-  investviews geo hexes R344953 | investviews stats current --h3 -
+  investviews geo hexes R344953 --all --ids-only | investviews stats current --h3 -
+
+⚠️ --ids-only IS NOT OPTIONAL IN THAT PIPE. The plain "geo hexes" listing is
+written for a reader — a header, an availability sentence and a cost line
+around the ids — and piping it here splits those words up and sends them as
+cells. Every --h3 value is now checked to be a cell before anything is sent, so
+the plain pipe fails locally and free rather than at the server; --ids-only is
+what makes it work.
 
 ⚠️ METERED, against the "current" group. Resolve the place first with the free
 geo commands, and check its availability line before spending this.
@@ -224,13 +294,16 @@ nothing in this window. It is not a zero and not an error.`,
 			return err
 		}
 		return v.emit(cmd, resp, resp.Meta, 1, api.EndpointStatsCurrent, func(w io.Writer) {
-			renderCurrent(w, resp)
+			renderCurrent(w, resp, params)
 		})
 	}
 	return cmd
 }
 
-func renderCurrent(w io.Writer, resp *api.CurrentStats) {
+// renderCurrent takes the params as well as the answer, because the empty
+// answer has to suggest a next move and a next move is only valid for the
+// selector that produced it.
+func renderCurrent(w io.Writer, resp *api.CurrentStats, params api.StatsParams) {
 	fmt.Fprintln(w, territoryLine(resp.Territory))
 	fmt.Fprintf(w, "period %s (%s) · window %s → %s · as_of %s · fx %s · figures in %s\n",
 		str(resp.Period), dash(resp.Granularity), str(resp.WindowStart), str(resp.WindowEnd),
@@ -239,25 +312,76 @@ func renderCurrent(w io.Writer, resp *api.CurrentStats) {
 	fmt.Fprintln(w)
 
 	if len(resp.Stats) == 0 {
-		renderEmptyStats(w, resp)
+		renderEmptyStats(w, resp, params)
 		return
 	}
 	renderStatRows(w, resp.Stats, resp.Currency)
 	renderStatFootnotes(w, resp.Stats)
 }
 
-func renderEmptyStats(w io.Writer, resp *api.CurrentStats) {
+// renderEmptyStats is the normal answer for a covered territory that held
+// nothing this period. Every move it names must be one the CLI will accept for
+// THE SELECTOR THAT PRODUCED THIS ANSWER — a hint is an instruction, and one
+// that fails locally sends an agent into an error it did not cause.
+//
+// Two ways that went wrong, both fixed here:
+//
+//   - "a coarser --res" was printed unconditionally. --res is refused
+//     alongside --geo-id AND alongside --h3 (see api.StatsParams.selector), so
+//     it is only ever a move for the circle — and geo_id is the commonest
+//     empty case there is.
+//   - "investviews stats history" was printed with no selector whenever the
+//     answer carried no geo_id, which is every --h3 and every circle request.
+//     A bare `stats history` names no territory and is refused locally.
+func renderEmptyStats(w io.Writer, resp *api.CurrentStats, params api.StatsParams) {
 	fmt.Fprintf(w, "No figures for this territory in period %s. That is a NORMAL answer, not an\n", str(resp.Period))
 	fmt.Fprintln(w, "error and not a zero: the territory is covered, and it held nothing that met the")
 	fmt.Fprintln(w, "display floor in this window.")
 	if resp.Snapshot.EarliestPeriod != "" {
 		fmt.Fprintf(w, "History goes back to %s.\n", resp.Snapshot.EarliestPeriod)
 	}
-	next := "investviews stats history"
-	if resp.Territory.GeoID != "" {
-		next += " --geo-id " + resp.Territory.GeoID
+
+	var moves []string
+	if sel := selectorArgs(params, resp.Territory); sel != "" {
+		moves = append(moves, "investviews stats history "+sel)
 	}
-	fmt.Fprintf(w, "Next: %s, or a coarser --res, or a wider filter set.\n", next)
+	if isCircle(params) {
+		moves = append(moves, "a coarser --res")
+	}
+	moves = append(moves, "a wider filter set")
+	fmt.Fprintf(w, "Next: %s.\n", strings.Join(moves, ", or "))
+}
+
+// maxHintCells is how many cell ids a hint will spell out before naming them
+// by count instead. A hint that reprinted 500 ids would bury itself.
+const maxHintCells = 8
+
+// selectorArgs spells the territory THIS request named, so the follow-up
+// command a hint prints is the one that just ran with "current" swapped for
+// "history" — never a command missing its selector.
+func selectorArgs(params api.StatsParams, territory api.Territory) string {
+	switch {
+	case strings.TrimSpace(params.GeoID) != "":
+		return "--geo-id " + strings.TrimSpace(params.GeoID)
+	case len(params.H3) > 0:
+		if len(params.H3) <= maxHintCells {
+			return "--h3 " + strings.Join(params.H3, ",")
+		}
+		return fmt.Sprintf("--h3 <the same %d cells>", len(params.H3))
+	case isCircle(params):
+		return fmt.Sprintf("--lat %g --lng %g --radius-km %g", *params.Lat, *params.Lng, *params.RadiusKm)
+	case territory.GeoID != "":
+		// Nothing was parsed from flags — the caller built the params
+		// directly. Fall back to what the server echoed.
+		return "--geo-id " + territory.GeoID
+	default:
+		return ""
+	}
+}
+
+// isCircle reports the one selector that --res is valid for.
+func isCircle(params api.StatsParams) bool {
+	return params.Lat != nil && params.Lng != nil && params.RadiusKm != nil
 }
 
 // renderStatRows prints one row per cell or place. Each row's identity comes

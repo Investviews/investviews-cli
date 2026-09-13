@@ -462,3 +462,37 @@ func TestAnUnreadableOptionalFieldDoesNotCostTheEnvelope(t *testing.T) {
 		t.Error("the raw field must stay in Extra")
 	}
 }
+
+// ⚠️ A HINT THAT NAMES A FLAG THIS CLIENT REFUSES IS A HINT THAT FAILS.
+//
+// --res is valid for the circle ALONE — StatsParams.selector refuses it
+// alongside both h3 and geo_id — and these two codes are most often reached
+// through h3: too many cells, or cells finer than the plan. Both hints used to
+// say "ask for a coarser --res" and stop, which for an h3 caller is an
+// instruction to run a command that exits 1 before it is sent.
+func TestHintsDoNotSendAnH3CallerToAFlagThatIsRefusedAlongsideH3(t *testing.T) {
+	for _, code := range []ErrorCode{CodeResolutionNotInPlan, CodeTooManyHexes} {
+		t.Run(string(code), func(t *testing.T) {
+			hint := (&APIError{Code: code}).Hint()
+			if !strings.Contains(hint, "--res") {
+				t.Fatalf("hint = %q — the circle's move is still --res and must still be named", hint)
+			}
+			// It must not read as "--res, whatever you asked with".
+			for _, want := range []string{"--h3", "--geo-id"} {
+				if !strings.Contains(hint, want) {
+					t.Errorf("hint = %q — it names --res without saying what %s callers do instead", hint, want)
+				}
+			}
+		})
+	}
+
+	// And the rule it rests on: --res really is refused with both.
+	for _, params := range []StatsParams{
+		{H3: []string{"613498076398616575"}, Res: ptrInt(6)},
+		{GeoID: "es", Res: ptrInt(6)},
+	} {
+		if _, err := params.selector(); err == nil {
+			t.Errorf("selector() accepted res alongside %+v; the hints above assume it does not", params)
+		}
+	}
+}

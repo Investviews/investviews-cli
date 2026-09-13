@@ -94,9 +94,16 @@ Three consequences the CLI is built around:
   `400 invalid_cursor`: your position is gone, restart the listing **without** a cursor. Retrying
   the same cursor never succeeds.
 
-At the root of `/geo` (no `parent`) the API **ignores `limit`** and returns all 37 countries.
+At the root of `/geo` (no `parent`) the API **ignores `limit`** and returns all 37 countries. That is
+why the CLI's offset walker stops on any page that is not **exactly** the limit, short or long: a
+page longer than the limit means the server ignored it, so the endpoint is not paging and there is no
+page 2 to ask for. Written as the rule rather than as a root special case, it also covers the next
+endpoint that behaves this way.
 
 Hex ids come back as **decimal int64 strings** (`"613498076398616575"`), not `87…` hex strings.
+`/stats/*` also accepts the canonical H3 form (`8839540ad1fffff`); the CLI accepts both and refuses
+anything that is not a cell index before it sends the request, since `--h3 -` reads a pipe and a
+rendered listing tokenises into words that look like ids.
 
 ## Errors
 

@@ -2,7 +2,10 @@ package commands
 
 import (
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/investviews/investviews-cli/internal/api"
 )
@@ -143,4 +146,103 @@ func TestHexIDsAcceptRepeatsCommasAndStdin(t *testing.T) {
 	if len(cells) != 3 || cells[0] != "1" || cells[2] != "3" {
 		t.Errorf("cells = %v", cells)
 	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// every shipped example must be a command line that exists
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ⚠️ A SHIPPED EXAMPLE IS AN INSTRUCTION, AND AN AGENT RUNS IT VERBATIM.
+//
+// `stats current --help` shipped
+//
+//	investviews geo hexes R344953 | investviews stats current --h3 -
+//
+// for a whole release, and `geo hexes` had no ids-only output: the pipe sent
+// the header's words — R344953, València, (city, es), 3, cell(s), at, 8 — to a
+// METERED endpoint as h3= values. Nothing in the build noticed, because
+// nothing in the build had ever run the examples.
+//
+// This walks every example in every Long text, both halves of every pipe, and
+// asserts each one names a command that exists, uses only flags that command
+// registers, and passes that command's own argument rule. It cannot prove an
+// example does the right thing — only a real run does that — but it does make
+// a renamed flag or a command that never existed fail the build.
+func TestEveryExampleInHelpTextIsACommandLineThatExists(t *testing.T) {
+	root := &cobra.Command{Use: "investviews"}
+	for _, sub := range All(Deps{}) {
+		root.AddCommand(sub)
+	}
+
+	var checked int
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		for _, line := range strings.Split(cmd.Long, "\n") {
+			for _, half := range strings.Split(line, "|") {
+				args, ok := exampleArgs(half)
+				if !ok {
+					continue
+				}
+				checked++
+				t.Run(strings.Join(args, " "), func(t *testing.T) {
+					target, rest, err := root.Find(args)
+					if err != nil {
+						t.Fatalf("no such command: %v", err)
+					}
+					if err := target.ParseFlags(rest); err != nil {
+						t.Fatalf("the example uses a flag %q does not have: %v", target.CommandPath(), err)
+					}
+					if err := target.ValidateArgs(target.Flags().Args()); err != nil {
+						t.Fatalf("%q would refuse this line's arguments: %v", target.CommandPath(), err)
+					}
+				})
+			}
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+
+	// A walker that silently found nothing would pass forever.
+	if checked < 10 {
+		t.Fatalf("only %d examples were checked; the extractor has stopped matching them", checked)
+	}
+}
+
+// exampleArgs turns one line of help text into argv, or reports that the line
+// is not an example. It honours "$ " prompts, double quotes and trailing "#"
+// comments — the three things that separate a line a reader can paste from one
+// that only looks like it.
+func exampleArgs(line string) ([]string, bool) {
+	line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "$"))
+	if comment := strings.Index(line, " #"); comment >= 0 {
+		line = line[:comment]
+	}
+	if !strings.HasPrefix(line, "investviews ") {
+		return nil, false
+	}
+
+	var args []string
+	var current strings.Builder
+	var quoted, started bool
+	for _, r := range strings.TrimPrefix(line, "investviews ") {
+		switch {
+		case r == '"':
+			quoted, started = !quoted, true
+		case r == ' ' && !quoted:
+			if started {
+				args = append(args, current.String())
+				current.Reset()
+				started = false
+			}
+		default:
+			current.WriteRune(r)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, current.String())
+	}
+	return args, len(args) > 0
 }

@@ -409,3 +409,195 @@ func TestHexesAllRefusesToStartFromACursor(t *testing.T) {
 		t.Errorf("sent %d requests", res.hits())
 	}
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// geo hexes --ids-only — the shape a pipe can read
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ⚠️ STDOUT MUST BE THE IDS AND NOTHING ELSE. The default listing is written
+// for a reader, and piping that into `stats current --h3 -` sent the header,
+// the availability sentence, the cursor hint and the cost line to a METERED
+// endpoint as if each word were a cell.
+func TestHexesIDsOnlyPrintsNothingButTheIDs(t *testing.T) {
+	body := `{"geo_id":"R344953","name":"València","level":"city","country":"es","h3_res":8,
+	 "hexes":["613498076398616575","613498076402810879"],"next_cursor":null,
+	 "prices_available":true,"reports_available":true}`
+
+	res := run(t, freeJSON(body), "geo", "hexes", "R344953", "--ids-only")
+	if res.err != nil {
+		t.Fatalf("hexes --ids-only: %v", res.err)
+	}
+	if got := res.stdout; got != "613498076398616575\n613498076402810879\n" {
+		t.Errorf("stdout is not a bare id list:\n%q", got)
+	}
+	// Everything the reader form prints must be gone from stdout.
+	for _, unwanted := range []string{"València", "city", "cell(s)", "prices", "cost:", "—"} {
+		missing(t, res.stdout, unwanted)
+	}
+	// ⚠️ but the cost line is still printed, on stderr — a free call and a
+	// metered one must never look alike, whatever shape the payload is in.
+	contains(t, res.stderr, "cost: FREE — group metadata, uncounted")
+}
+
+// The pipe the help text documents, run as a pipe: the ids this command
+// prints must be accepted by the command it is piped into.
+func TestHexesIDsOnlyOutputIsAcceptedByStatsCurrent(t *testing.T) {
+	body := `{"geo_id":"R344953","name":"València","level":"city","country":"es","h3_res":8,
+	 "hexes":["613498076398616575","613498076402810879","613498076568485887"],
+	 "next_cursor":null,"prices_available":true,"reports_available":true}`
+
+	listing := run(t, freeJSON(body), "geo", "hexes", "R344953", "--all", "--ids-only")
+	if listing.err != nil {
+		t.Fatalf("hexes --all --ids-only: %v", listing.err)
+	}
+
+	stats := runWithStdin(t, meteredJSON(currentBody), strings.NewReader(listing.stdout),
+		"stats", "current", "--h3", "-")
+	if stats.err != nil {
+		t.Fatalf("the documented pipe must work end to end, got: %v", stats.err)
+	}
+	if stats.hits() != 1 {
+		t.Fatalf("hits = %d, want 1", stats.hits())
+	}
+	want := "h3=613498076398616575%2C613498076402810879%2C613498076568485887"
+	if !strings.Contains(stats.lastQuery(), want) {
+		t.Errorf("query %q is missing %q", stats.lastQuery(), want)
+	}
+}
+
+// ⚠️ A PARTIAL PIPE IS THE ONE FAILURE --ids-only CAN STILL CAUSE, and it is
+// silent: the receiving command gets a valid list of cells that is only part
+// of the place, and answers confidently about the part. It is called out on
+// stderr, where it cannot contaminate the stream.
+func TestHexesIDsOnlyWarnsOnStderrWhenTheListingIsPartial(t *testing.T) {
+	body := `{"geo_id":"R344953","name":"València","level":"city","country":"es","h3_res":8,
+	 "hexes":["613498076398616575"],"next_cursor":"eyJrIjoxfQ",
+	 "prices_available":true,"reports_available":true}`
+
+	res := run(t, freeJSON(body), "geo", "hexes", "R344953", "--ids-only")
+	if res.err != nil {
+		t.Fatalf("hexes --ids-only: %v", res.err)
+	}
+	if res.stdout != "613498076398616575\n" {
+		t.Errorf("the warning must not reach stdout:\n%q", res.stdout)
+	}
+	contains(t, res.stderr, "partial")
+	contains(t, res.stderr, "--all")
+}
+
+// --json is already machine-readable, and asking for both is not an error.
+func TestHexesJSONWinsOverIDsOnly(t *testing.T) {
+	body := `{"geo_id":"R1","name":"P","level":"city","country":"es","h3_res":8,
+	 "hexes":["613498076398616575"],"next_cursor":null,"prices_available":true,
+	 "reports_available":false}`
+
+	res := run(t, freeJSON(body), "geo", "hexes", "R1", "--ids-only", "--json")
+	if res.err != nil {
+		t.Fatalf("hexes --ids-only --json: %v", res.err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(res.stdout), "{") {
+		t.Errorf("stdout is not a JSON document:\n%s", res.stdout)
+	}
+	contains(t, res.stderr, "cost:")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// the offset walker, at a root that ignores the limit
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ⚠️ `geo browse --all --limit 10` used to exit 1. The root of /geo ignores
+// both limit and page and answers with every country, so the walker asked for
+// page 2, got the same ids, and tripped the stall guard on a query that was
+// perfectly well formed. The guard is right and stays; the walker no longer
+// reaches it.
+func TestBrowseAllSurvivesARootThatIgnoresTheLimit(t *testing.T) {
+	res := run(t, func(w http.ResponseWriter, r *http.Request) {
+		freeHeaders(w)
+		writeBody(w, http.StatusOK, countryListBody(37))
+	}, "geo", "browse", "--all", "--limit", "10")
+
+	if res.err != nil {
+		t.Fatalf("a server that ignores the limit is not an error: %v", res.err)
+	}
+	if res.hits() != 1 {
+		t.Errorf("hits = %d, want 1 — a page longer than the limit has no page 2", res.hits())
+	}
+	contains(t, res.stdout, "37 result(s)")
+	missing(t, res.stdout, "paging stopped making progress")
+}
+
+func countryListBody(n int) string {
+	rows := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		rows = append(rows, fmt.Sprintf(
+			`{"kind":"country","geo_id":"c%d","name":"C%d","level":"country","country":"c%d",`+
+				`"ancestors":[],"prices_available":true,"current_period":"2026-08-01",`+
+				`"reports_available":true}`, i, i, i))
+	}
+	return `{"parent":null,"results":[` + strings.Join(rows, ",") + `]}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// hints that name what the caller already holds
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ⚠️ The caller passed the id as --parent, so a hint reading "<its geo_id>"
+// asks it to go and find the thing it is standing on. Spell the id.
+func TestEmptyBrowseHintsWithTheIDThisCallUsed(t *testing.T) {
+	body := `{"parent":{"geo_id":"R14727511","name":"Russafa","level":"microzone","country":"es",
+	 "ancestors":[]},"results":[]}`
+
+	res := run(t, freeJSON(body), "geo", "browse", "--parent", "R14727511")
+	if res.err != nil {
+		t.Fatalf("an empty listing is not an error: %v", res.err)
+	}
+	contains(t, res.stdout, "investviews stats current --geo-id R14727511")
+	missing(t, res.stdout, "<its geo_id>")
+
+	levelled := run(t, freeJSON(body), "geo", "browse", "--parent", "R14727511", "--level", "microzone")
+	if levelled.err != nil {
+		t.Fatalf("an empty level filter is not an error: %v", levelled.err)
+	}
+	contains(t, levelled.stdout, "investviews geo browse --parent R14727511")
+}
+
+// ⚠️ This is the one endpoint whose zones can carry no geo_id, and the
+// availability line is printed ABOVE the zone table — so offering "spend a
+// zone's geo_id" would promise an id the reader is then told does not exist.
+// The cell's own id is always there and is always spendable.
+func TestLookupOffersTheCellWhenNoZoneCarriesAnID(t *testing.T) {
+	unaddressable := `{"kind":"point","lat":39.4699,"lng":-0.3763,"h3":"613498079267520511",
+	 "h3_res":8,"source":"h3","country":"es","display_name":null,"prices_available":true,
+	 "reports_available":true,
+	 "zones":[{"level":"microzone","name":"Russafa","geo_id":null,"ancestors":null,
+	   "current_period":null,"hexes_url":null}]}`
+
+	res := run(t, freeJSON(unaddressable), "geo", "lookup", "--h3", "613498079267520511")
+	if res.err != nil {
+		t.Fatalf("lookup: %v", res.err)
+	}
+	contains(t, res.stdout, "investviews stats current --h3 613498079267520511")
+	contains(t, res.stdout, "no zone here carries a geo_id")
+
+	addressable := strings.Replace(unaddressable, `"geo_id":null`, `"geo_id":"R14727511"`, 1)
+	res = run(t, freeJSON(addressable), "geo", "lookup", "--h3", "613498079267520511")
+	if res.err != nil {
+		t.Fatalf("lookup: %v", res.err)
+	}
+	contains(t, res.stdout, "or an addressable zone's geo_id below")
+}
+
+// The free endpoint gets the same check: a token that is not a cell is
+// answered locally by name, not as an unknown_place 404 that reads as "this
+// cell is outside our geography".
+func TestLookupRefusesATokenThatIsNotACell(t *testing.T) {
+	res := run(t, nil, "geo", "lookup", "--h3", "R344953")
+	if res.err == nil {
+		t.Fatal("a non-cell token must be refused")
+	}
+	if res.hits() != 0 {
+		t.Errorf("sent %d requests for a locally refused call", res.hits())
+	}
+	contains(t, res.err.Error(), `"R344953"`)
+	contains(t, res.err.Error(), "is not an H3 cell id")
+}

@@ -190,7 +190,15 @@ func (e *APIError) Hint() string {
 	case CodeRateLimited:
 		return "Too many requests this minute — this is a burst limit, NOT your quota. Wait and retry."
 	case CodeResolutionNotInPlan:
-		return "Ask for a coarser --res; this plan does not reach that resolution."
+		// ⚠️ THIS HINT CANNOT SAY "USE A COARSER --res" AND STOP. --res is
+		// valid for the circle ALONE: it is refused locally alongside both
+		// --h3 and --geo-id (see StatsParams.selector), and a 403 here
+		// most often came from --h3 cells finer than the plan reaches. A
+		// hint naming a flag the CLI then refuses sends the caller into an
+		// error it did not cause, so every selector gets its own move.
+		return "This plan does not reach that resolution. With --lat/--lng/--radius-km ask for a " +
+			"coarser --res; with --h3 ask about coarser cells; or name the place with --geo-id, " +
+			"which is answered as one row and chooses no resolution."
 	case CodeUnknownPlace:
 		return "Nothing matched inside a market we serve. Try the did_you_mean suggestions, or browse from investviews geo."
 	case CodeNotCovered:
@@ -202,7 +210,11 @@ func (e *APIError) Hint() string {
 	case CodeMissingParameter:
 		return "Send the parameter the message names."
 	case CodeTooManyHexes:
-		return "The territory exceeds the per-request cell budget. Ask for a coarser --res or a smaller place."
+		// Same rule as resolution_not_in_plan above: this 403's commonest
+		// cause is a long --h3 list, and --res is refused alongside --h3.
+		return "The territory exceeds the per-request cell budget. Ask about fewer cells with --h3, " +
+			"a smaller --radius-km (a coarser --res works for the circle only), or name the place " +
+			"with --geo-id, which is one row and has no cell budget."
 	case CodeReportsUnavailableForCountry:
 		return "The report pipeline does not serve that country."
 	case CodeInternalError:
