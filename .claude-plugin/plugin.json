@@ -1,0 +1,22 @@
+{
+  "name": "investviews",
+  "displayName": "InvestViews",
+  "version": "0.1.0",
+  "description": "Answer real-estate market questions for a named place: resolve the geography for free, then spend one metered call for medians, price per m2 and history.",
+  "author": {
+    "name": "InvestViews",
+    "url": "https://investviews.ai"
+  },
+  "homepage": "https://docs.investviews.ai",
+  "repository": "https://github.com/Investviews/investviews-cli",
+  "license": "MIT",
+  "keywords": [
+    "real-estate",
+    "property",
+    "market-data",
+    "prices",
+    "geography",
+    "h3",
+    "api"
+  ]
+}
