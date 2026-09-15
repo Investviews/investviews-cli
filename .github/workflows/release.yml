@@ -20,7 +20,7 @@
 # first asset upload and never reaches the tap. Do not remove that setting.
 #
 # HOMEBREW_TAP_GITHUB_TOKEN: fine-grained, scoped to Investviews/homebrew-tap
-# (Contents: read+write). Created 2026-09-15, EXPIRES 2027-09-15.
+# (Contents: read+write). Created 2026-09-15, EXPIRES 2027-09-16.
 # A 401/403 on the tap step after that date means it expired: generate a new
 # one at https://github.com/settings/personal-access-tokens/new, then
 # `gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo Investviews/investviews-cli`,
