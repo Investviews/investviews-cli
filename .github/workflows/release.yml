@@ -18,6 +18,14 @@
 # Re-running after fixing the token is safe ONLY because .goreleaser.yaml sets
 # `release.replace_existing_artifacts: true` — without it the re-run 422s on the
 # first asset upload and never reaches the tap. Do not remove that setting.
+#
+# HOMEBREW_TAP_GITHUB_TOKEN: fine-grained, scoped to Investviews/homebrew-tap
+# (Contents: read+write). Created 2026-09-15, EXPIRES 2027-09-15.
+# A 401/403 on the tap step after that date means it expired: generate a new
+# one at https://github.com/settings/personal-access-tokens/new, then
+# `gh secret set HOMEBREW_TAP_GITHUB_TOKEN --repo Investviews/investviews-cli`,
+# then re-run this workflow. The GitHub release will already be up; the re-run
+# only finishes the cask.
 name: release
 
 on:
