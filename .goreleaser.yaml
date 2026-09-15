@@ -87,6 +87,17 @@ release:
     name: investviews-cli
   # A tag like v1.0.0-rc1 publishes as a pre-release without anyone deciding again.
   prerelease: auto
+  # ⚠️ THIS IS WHAT MAKES A RE-RUN SAFE, AND WITHOUT IT A RE-RUN IS NOT.
+  # The tap push (homebrew_casks below) runs AFTER the GitHub release is
+  # published. If it fails — expired token, token pending org approval, tap
+  # outage — the release and its archives are already up. Re-running the
+  # workflow for the same tag then hits the existing assets, and GitHub answers
+  # 422 `already_exists` on the first upload, BEFORE the tap step is reached.
+  # With this on, GoReleaser deletes the clashing asset and retries the upload,
+  # so a re-run reaches the tap step and finishes the job. Verified against the
+  # GoReleaser docs 2026-09-15; the earlier "re-running is safe" comment in
+  # release.yml was written without this and was wrong.
+  replace_existing_artifacts: true
   footer: |
     ---
     Docs: https://docs.investviews.ai

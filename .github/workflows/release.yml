@@ -12,10 +12,12 @@
 # needs a separate token with `contents: write` on the tap, stored as the
 # repository secret HOMEBREW_TAP_GITHUB_TOKEN.
 #
-# A missing secret fails LATE: this job publishes the GitHub release and its
-# binaries and THEN fails on the tap step. The release is already public at that
-# point, so the failure is noisy but not destructive, and re-running after adding
-# the secret is safe.
+# A missing, expired or not-yet-approved token fails LATE: this job publishes
+# the GitHub release and its binaries and THEN fails on the tap step. The release
+# is already public at that point, so the failure is noisy but not destructive.
+# Re-running after fixing the token is safe ONLY because .goreleaser.yaml sets
+# `release.replace_existing_artifacts: true` — without it the re-run 422s on the
+# first asset upload and never reaches the tap. Do not remove that setting.
 name: release
 
 on:
