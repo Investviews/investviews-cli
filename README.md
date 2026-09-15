@@ -1,13 +1,93 @@
 # investviews-cli
 
-Command-line client for the [InvestViews public API](https://docs.investviews.ai).
+**Real-estate market data for your AI assistant.** Ask Claude what flats cost in a neighbourhood, or
+how prices in a city moved over the last year, and it answers with real figures — median price, price
+per m², typical size — each one citing the period it comes from.
 
-> **Status: under construction.** The commands below work, the release pipeline is wired
-> (goreleaser, GitHub Actions) and the Claude Code plugin is in this repository. The Homebrew tap
-> repository now exists, but no release has been tagged yet, so `brew install` has nothing to fetch
-> and nothing has been published to a plugin marketplace.
+It is a command-line client for the [InvestViews public API](https://docs.investviews.ai), plus a
+Claude Code plugin that teaches Claude how to use it. You can also run the CLI by hand.
 
-## Commands
+## Quick start — ask Claude about property prices
+
+**1. Get an API token.** Tokens are created in your
+[InvestViews account settings](https://investviews.ai/user/account). See the
+[API quickstart](https://docs.investviews.ai/quickstart.html) for details.
+
+**2. Install the CLI.**
+
+```sh
+brew install Investviews/tap/investviews
+```
+
+On Linux, or without Homebrew, download the tarball for your platform from the
+[releases page](https://github.com/Investviews/investviews-cli/releases) and put `investviews` on
+your `PATH`.
+
+**3. Store your token.** It is saved to `~/.config/investviews/config.toml`, readable only by you.
+
+```sh
+investviews auth login --token iv_live_xxxxxxxx
+```
+
+**4. Add the plugin to Claude Code.** Run these inside Claude Code:
+
+```
+/plugin marketplace add Investviews/investviews-cli
+/plugin install investviews@investviews-cli
+```
+
+**5. Ask a question in plain words.**
+
+> What do flats cost in Russafa, Valencia right now?
+>
+> How have property prices in Montenegro changed over the last year?
+>
+> Which countries do you have data for?
+
+### What Claude does with that
+
+1. **Finds the place — free.** It searches or browses to the exact place, and uses the parent chain
+   to tell apart places with the same name (there are several neighbourhoods called "Centro").
+2. **Checks there is data — free.** Each place says whether figures exist and how fresh they are, so
+   Claude does not pay to ask about a place with nothing behind it.
+3. **Asks for the figures — one metered call.** Your token has a quota; only these calls count
+   against it. Finding and checking places never does.
+4. **Answers with a source.** Every figure comes with the period it covers, so you can check it.
+
+Every command prints a `cost:` line saying whether it was free or metered, so you can see what was
+spent.
+
+### Try the plugin without installing it
+
+Load this repository for a single session:
+
+```sh
+git clone https://github.com/Investviews/investviews-cli.git
+claude --plugin-dir investviews-cli -p "What do flats cost in Russafa, Valencia?"
+```
+
+The CLI must still be installed and logged in (steps 2 and 3).
+
+## Using another AI agent
+
+The CLI is an ordinary shell command, so any agent that can run commands can use it. The
+instructions Claude follows are plain Markdown in
+[`skills/investviews/SKILL.md`](skills/investviews/SKILL.md) — give that file to your agent as its
+guide. Claude Code is the only agent this repository ships a ready-made plugin for.
+
+## What is in the plugin
+
+| file | what it is |
+|---|---|
+| `.claude-plugin/marketplace.json` | the marketplace, named **`investviews-cli`**, listing one plugin |
+| `.claude-plugin/plugin.json` | the plugin, named **`investviews`** — hence `investviews@investviews-cli` |
+| `skills/investviews/SKILL.md` | the skill: how to go from a question to a cited figure |
+
+The skill teaches a workflow, not HTTP details: resolve the place for free, check that data exists,
+spend one metered call, cite the period. An agent that cannot tell free calls from metered ones
+either stops to ask permission it does not need, or burns quota it did not have to.
+
+## Using the CLI by hand
 
 | command | cost | what it does |
 |---|---|---|
@@ -90,9 +170,7 @@ nothing in that window, not an error and not a zero.
 Download the one for your platform, check it against `checksums.txt`, unpack it and put
 `investviews` on your `PATH`.
 
-**Homebrew (macOS).** ⚠️ Not available until the first release is tagged. The tap repository
-`Investviews/homebrew-tap` exists, but it holds no cask yet — a `v*` tag publishes one into it, and
-the install is then:
+**Homebrew (macOS).**
 
 ```sh
 brew install Investviews/tap/investviews
@@ -103,44 +181,12 @@ Homebrew installs casks on macOS only, so on Linux use the release tarball.
 **Which build am I running?**
 
 ```sh
-investviews version          # investviews 1.4.0 (commit …, built …, go1.25.4, darwin/arm64)
+investviews version          # investviews 0.1.0 (commit …, built …, go1.25.4, darwin/arm64)
 investviews version --json
 ```
 
 A binary you built yourself reports `dev`. That is not a fault — it means the version stamp the
 release pipeline writes was never applied.
-
-## Claude Code plugin
-
-This repository is also a Claude Code plugin and its own single-plugin marketplace, so Claude can
-answer market questions by driving the CLI. Install both with:
-
-```
-/plugin marketplace add Investviews/investviews-cli
-/plugin install investviews@investviews-cli
-```
-
-The marketplace is named **`investviews-cli`** (this repository) and the plugin inside it is named
-**`investviews`** — which is why the install line reads `investviews@investviews-cli`.
-
-| file | what it is |
-|---|---|
-| `.claude-plugin/plugin.json` | the plugin manifest |
-| `.claude-plugin/marketplace.json` | the marketplace, listing this one plugin at `./` |
-| `skills/investviews/SKILL.md` | the skill: the workflow, not an HTTP reference |
-
-The skill teaches the shape of the work — resolve a place for free, read the availability signal,
-then spend one metered call and cite the period — because an agent that does not know which calls
-cost quota either asks for permission it does not need or burns quota it does.
-
-To try it without installing anything, load the directory for one session:
-
-```sh
-claude --plugin-dir "$PWD" --bare -p "what do flats cost in Russafa, Valencia?"
-```
-
-The plugin does not ship the binary. `investviews` must be on `PATH` and a token configured; see
-Install and Authentication above.
 
 ## Build
 
@@ -180,7 +226,7 @@ echo "$INVESTVIEWS_TOKEN" | investviews auth login
 | command | what it does |
 |---|---|
 | `investviews auth login` | store a token in the config file |
-| `investviews auth status` | say whether a token is configured, where it came from, and show it masked; exits 1 when none is configured |
+| `investviews auth status` | say whether a token is configured, where it came from, and show it masked; exits 3 when none is configured |
 | `investviews auth logout` | remove the stored token |
 
 `auth status` never prints a full token — only the first and last four characters.
